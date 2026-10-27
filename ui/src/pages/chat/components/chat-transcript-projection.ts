@@ -76,6 +76,7 @@ export function projectChatTranscript(
     agents: props.agents,
     assistantAvatar: props.assistantAvatar,
     assistantAvatarUrl: props.assistantAvatarUrl,
+    assistantAvatarSource: props.assistantAvatarSource,
   });
   const assistantIdentity = {
     agentId: assistantAgentId,
@@ -91,7 +92,7 @@ export function projectChatTranscript(
   const chatItemsInput = {
     paneId: props.paneId,
     sessionKey: props.sessionKey,
-    archiveNotice: buildChatArchiveNotice(activeSession),
+    archiveNotice: buildChatArchiveNotice(props.transcriptMetadata ?? activeSession),
     runId: props.runId ?? null,
     compactionStatus: props.compactionStatus,
     locale,
@@ -283,6 +284,7 @@ export function projectChatTranscript(
     sessionKey: props.sessionKey,
     boardProvider: props.boardProvider,
     widgetLayout: props.widgetLayout,
+    displayFacts: props.displayFacts,
     agentId: assistantAgentId,
     runActive: props.runActive,
     asyncQuestions,

@@ -35,6 +35,7 @@ import {
   type MessageTextOptions,
   prepareMessageMarkdown,
 } from "./chat-message-text-preparation.ts";
+import { ChatRowDisplayContext } from "./chat-row-display-context.ts";
 
 export type { AssistantMessageDisclosure } from "./chat-message-text-preparation.ts";
 
@@ -242,6 +243,7 @@ export function MarkdownContent(props: MarkdownContentProps) {
   // Its callbacks mount media with this context; the reconciler retires each root.
   const solidOwner = getOwner();
   const presented = useContext(ContentPresentation);
+  const display = useContext(ChatRowDisplayContext);
   const fragment = document.createDocumentFragment();
   const roots = new Map<
     HTMLElement,
@@ -295,7 +297,7 @@ export function MarkdownContent(props: MarkdownContentProps) {
       connected,
       onUpdate: props.onUpdate,
     };
-  });
+  }, display);
   markdown(fragment);
   return Array.from(fragment.childNodes);
 }
