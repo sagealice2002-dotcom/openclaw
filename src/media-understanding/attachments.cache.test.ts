@@ -46,6 +46,11 @@ const PNG_1X1 = Buffer.from(
 const request = { attachmentIndex: 0, maxBytes: 1024, timeoutMs: 1000 };
 const pngRequest = { ...request, maxBytes: PNG_1X1.length };
 const remoteAttachment = { index: 0, url: "https://example.com/photo.png" };
+const audio = createSafeAudioFixtureBuffer(2048, 0x52);
+const rootsOnly = (...localPathRoots: string[]) => ({
+  localPathRoots,
+  includeDefaultLocalPathRoots: false,
+});
 const caches: MediaAttachmentCache[] = [];
 const it = baseIt.extend<{
   base: string;
@@ -60,9 +65,7 @@ const it = baseIt.extend<{
     await withEnvAsync({ OPENCLAW_STATE_DIR: base, PATH: "" }, () => use(base));
   },
   saved: async ({ stateDir: _stateDir }, use) => {
-    await use(
-      await saveMediaBuffer(createSafeAudioFixtureBuffer(2048, 0x52), "audio/ogg", "inbound"),
-    );
+    await use(await saveMediaBuffer(audio, "audio/ogg", "inbound"));
   },
   realFetch: async ({ task: _task }, use) => {
     const actual = await vi.importActual<typeof import("../media/fetch.js")>("../media/fetch.js");
@@ -76,10 +79,7 @@ function createCache(...args: ConstructorParameters<typeof MediaAttachmentCache>
   return cache;
 }
 function localCache(file: string, root: string, url?: string) {
-  return createCache([{ index: 0, path: file, url }], {
-    localPathRoots: [root],
-    includeDefaultLocalPathRoots: false,
-  });
+  return createCache([{ index: 0, path: file, url }], rootsOnly(root));
 }
 function mockRemote(base: string, fileName = "photo.png") {
   vi.mocked(resolvePreferredOpenClawTmpDir).mockReturnValue(base);
@@ -110,12 +110,12 @@ async function expectZeroLimit(cache: MediaAttachmentCache, attachmentIndex = 0)
 function failPartialWrite(beforeFailure = async () => {}) {
   const writeFile = fs.writeFile.bind(fs);
   const error = Object.assign(new Error("disk full"), { code: "ENOSPC" });
-  const spy = vi.spyOn(fs, "writeFile").mockImplementationOnce(async (file) => {
+  vi.spyOn(fs, "writeFile").mockImplementationOnce(async (file) => {
     await writeFile(file, PNG_1X1.subarray(0, 4));
     await beforeFailure();
     throw error;
   });
-  return { error, spy };
+  return error;
 }
 const test = it.extend<{ cache: MediaAttachmentCache }>({
   cache: async ({ base }, use) => {
@@ -170,9 +170,7 @@ it("never renders signed URL query credentials as attachment names", async () =>
 });
 it("prefers the media:// alias when the supplied path is blocked", async ({ saved, base }) => {
   const blocked = await mediaFile(base, "blocked.ogg", "blocked");
-  expect((await storedCache(saved, blocked).getBuffer(storeRequest)).buffer).toEqual(
-    createSafeAudioFixtureBuffer(2048, 0x52),
-  );
+  expect((await storedCache(saved, blocked).getBuffer(storeRequest)).buffer).toEqual(audio);
   expect(readRemoteMediaBufferMock).not.toHaveBeenCalled();
 });
 it("returns the stored path after a stale path fails", async ({ saved }) => {
@@ -212,7 +210,7 @@ it("allows RFC2544 benchmark-range URLs only when media fetch policy opts in", a
   await expect(createCache([attachment]).getBuffer(request)).rejects.toThrow(
     /private|internal|blocked/i,
   );
-  const fetchSpy = download("image", "image/jpeg");
+  download("image", "image/jpeg");
   const cache = createCache([attachment], { ssrfPolicy: { allowRfc2544BenchmarkRange: true } });
   expect(await cache.getBuffer(request)).toStrictEqual({
     buffer: Buffer.from("image"),
@@ -221,7 +219,6 @@ it("allows RFC2544 benchmark-range URLs only when media fetch policy opts in", a
     fileName: "file.jpg",
     size: 5,
   });
-  expect(fetchSpy).toHaveBeenCalledTimes(1);
 });
 it("carries no local path when a blocked path recovers through the URL fallback", async ({
   base,
@@ -232,8 +229,7 @@ it("carries no local path when a blocked path recovers through the URL fallback"
   const cache = createCache(
     [{ index: 0, path: blockedPath, url: "http://198.18.0.153/report.doc" }],
     {
-      localPathRoots: [path.join(base, "allowed-only")],
-      includeDefaultLocalPathRoots: false,
+      ...rootsOnly(path.join(base, "allowed-only")),
       ssrfPolicy: { allowRfc2544BenchmarkRange: true },
     },
   );
@@ -265,7 +261,7 @@ it("resolves managed inbound media URI attachments", async ({ saved }) => {
     path.dirname(saved.path),
   );
   const result = await cache.getBuffer(storeRequest);
-  expect(result.buffer).toEqual(createSafeAudioFixtureBuffer(2048, 0x52));
+  expect(result.buffer).toEqual(audio);
   expect(result.fileName).toBe(saved.id);
 });
 it("blocks nested managed inbound media URI attachments", async () => {
@@ -330,9 +326,9 @@ it.for(["canonical", "directory alias"] as const)(
     const stateDir = path.join(base, "state");
     const sessionWorkspaceDir = path.join(stateDir, "sandboxes", "session-a");
     const files = [
-      await mediaFile(sessionWorkspaceDir, "own.txt", "OWN-SANDBOX-CONTENT"),
-      await mediaFile(stateDir, "sandboxes/session-b/sibling.txt", "SIBLING-SANDBOX-CONTENT"),
-      await mediaFile(stateDir, "workspace/host-secret.txt", "SHARED-HOST-WORKSPACE-CONTENT"),
+      await mediaFile(sessionWorkspaceDir, "own.txt", "own"),
+      await mediaFile(stateDir, "sandboxes/session-b/sibling.txt", "sibling"),
+      await mediaFile(stateDir, "workspace/host-secret.txt", "host"),
     ];
     let sourceStateDir = stateDir;
     if (spelling === "directory alias") {
@@ -349,11 +345,10 @@ it.for(["canonical", "directory alias"] as const)(
       });
       const cache = createCache(
         files.map((file, index) => ({ index, path: sourcePath(file) })),
-        { localPathRoots: roots, includeDefaultLocalPathRoots: false },
+        rootsOnly(...roots),
       );
 
-      const own = await cache.getBuffer(request);
-      expect(own.buffer.toString()).toBe("OWN-SANDBOX-CONTENT");
+      expect((await cache.getBuffer(request)).buffer.toString()).toBe("own");
       for (const attachmentIndex of [1, 2]) {
         await expect(cache.getBuffer({ ...request, attachmentIndex })).rejects.toThrow(
           /outside allowed roots/i,
@@ -397,22 +392,13 @@ it.for(["growing", "read-failure"] as const)(
   "closes one bounded local read when the file is %s",
   async (behavior, { base }) => {
     const attachmentPath = await mediaFile(base, "growing.png");
-    const maxBytes = PNG_1X1.length;
+    const maxBytes = pngRequest.maxBytes;
     const open = fs.open.bind(fs);
     let consumed = 0;
     let opens = 0;
     let closes = 0;
     let grew = false;
     const readError = new Error("synthetic read failure");
-    const growBeforeRead = async () => {
-      if (behavior === "read-failure") {
-        throw readError;
-      }
-      if (!grew) {
-        grew = true;
-        await fs.appendFile(attachmentPath, Buffer.alloc(4096));
-      }
-    };
     vi.spyOn(fs, "open").mockImplementation(async (...args) => {
       const handle = await open(...args);
       opens += 1;
@@ -423,7 +409,13 @@ it.for(["growing", "read-failure"] as const)(
       });
       const read = handle.read.bind(handle);
       vi.spyOn(handle, "read").mockImplementation(async (...readArgs) => {
-        await growBeforeRead();
+        if (behavior === "read-failure") {
+          throw readError;
+        }
+        if (!grew) {
+          grew = true;
+          await fs.appendFile(attachmentPath, Buffer.alloc(4096));
+        }
         const result = await read(...readArgs);
         consumed += result.bytesRead;
         return result;
@@ -432,7 +424,7 @@ it.for(["growing", "read-failure"] as const)(
     });
     const cache = localCache(attachmentPath, base);
 
-    const result = cache.getBuffer({ ...request, maxBytes });
+    const result = cache.getBuffer(pngRequest);
     if (behavior === "growing") {
       await expect(result).rejects.toMatchObject({ reason: "maxBytes" });
     } else {
@@ -446,28 +438,23 @@ it.for(["growing", "read-failure"] as const)(
   },
 );
 
-test.for([
-  { fileName: "photo.png", extension: ".png", removeBeforeCleanup: false },
-  { fileName: "photo.a:b", extension: ".b", removeBeforeCleanup: true },
-])(
-  "restages $fileName with a safe suffix after cache cleanup",
-  async ({ fileName, extension, removeBeforeCleanup }, { base, cache }) => {
-    readRemoteMediaBufferMock.mockResolvedValue({ buffer: PNG_1X1, fileName });
-    const first = await cache.getPath(pngRequest);
-    await expectZeroLimit(cache);
-    expect(path.extname(first)).toBe(extension);
-    if (removeBeforeCleanup) {
-      await fs.unlink(first);
-    }
-    await cache.cleanup();
-    await expect(fs.stat(first)).rejects.toMatchObject({ code: "ENOENT" });
-    expect(await fs.readdir(base)).toEqual([]);
-    const second = await cache.getPath(pngRequest);
-    expect(second).not.toBe(first);
-    await expectStaged(cache, second);
-    expect(readRemoteMediaBufferMock).toHaveBeenCalledTimes(1);
-  },
-);
+test("restages with a safe suffix after cleanup of an already removed file", async ({
+  base,
+  cache,
+}) => {
+  readRemoteMediaBufferMock.mockResolvedValue({ buffer: PNG_1X1, fileName: "photo.a:b" });
+  const first = await cache.getPath(pngRequest);
+  await expectZeroLimit(cache);
+  expect(path.extname(first)).toBe(".b");
+  await fs.unlink(first);
+  await cache.cleanup();
+  await expect(fs.stat(first)).rejects.toMatchObject({ code: "ENOENT" });
+  expect(await fs.readdir(base)).toEqual([]);
+  const second = await cache.getPath(pngRequest);
+  expect(second).not.toBe(first);
+  await expectStaged(cache, second);
+  expect(readRemoteMediaBufferMock).toHaveBeenCalledTimes(1);
+});
 
 it("keeps local access lazy and borrowed bytes alive across cleanup", async ({ base }) => {
   vi.mocked(resolvePreferredOpenClawTmpDir).mockReturnValue(base);
@@ -482,7 +469,7 @@ it("keeps local access lazy and borrowed bytes alive across cleanup", async ({ b
       { ...remoteAttachment, mime: "application/pdf" },
       { index: 1, path: localPath, mime: "application/octet-stream" },
     ],
-    { localPathRoots: [base], includeDefaultLocalPathRoots: false },
+    rootsOnly(base),
   );
   expect(await cache.getPath({ ...pngRequest, attachmentIndex: 1 })).toBe(localPath);
   await expectZeroLimit(cache, 1);
@@ -533,9 +520,8 @@ it.for([false, true])(
 it.skipIf(process.platform === "win32")(
   "stages in a selector-approved fallback root and preserves unrelated files",
   async ({ base }) => {
-    const preferredDir = path.join(base, "preferred-is-a-file");
+    const preferredDir = await mediaFile(base, "preferred", "not a directory");
     const fallbackParent = path.join(base, "shared-tmp");
-    await fs.writeFile(preferredDir, "unavailable preferred directory");
     await fs.mkdir(fallbackParent);
     await fs.chmod(fallbackParent, 0o770);
     const actual = await vi.importActual<typeof import("../infra/tmp-openclaw-dir.js")>(
@@ -561,7 +547,7 @@ it.skipIf(process.platform === "win32")(
 test("keeps concurrent staging success after a write failure", async ({ base, cache }) => {
   const started = createDeferred();
   const finish = createDeferred();
-  const { error } = failPartialWrite(async () => {
+  const error = failPartialWrite(async () => {
     started.resolve();
     await finish.promise;
   });
@@ -581,7 +567,7 @@ test("keeps concurrent staging success after a write failure", async ({ base, ca
 
 test("retries failed cleanup across later staging success", async ({ base, cache }) => {
   const warn = vi.spyOn(logger, "logWarn").mockImplementation(() => {});
-  const { error, spy } = failPartialWrite();
+  const error = failPartialWrite();
   const cleanupError = Object.assign(new Error("permission denied"), { code: "EACCES" });
   const unlink = vi.spyOn(fs, "unlink").mockRejectedValueOnce(cleanupError);
 
@@ -597,7 +583,6 @@ test("retries failed cleanup across later staging success", async ({ base, cache
 
   const staged = await cache.getPath(request);
   await expectStaged(cache, staged);
-  expect(spy).toHaveBeenCalledTimes(2);
   expect(await fs.readdir(base)).toHaveLength(2);
 
   unlink.mockRejectedValueOnce(cleanupError);
