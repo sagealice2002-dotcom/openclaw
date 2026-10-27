@@ -30,6 +30,7 @@ import {
 } from "../lib/sessions/index.ts";
 import { reconcileSessionHistory } from "../lib/sessions/reconcile.ts";
 import { createSessionArchiveState } from "../lib/sessions/session-archive-state.ts";
+import { createSessionState as emptySessionState } from "../lib/sessions/session-capability.ts";
 import type { SessionRequestClient } from "../lib/sessions/session-capability.ts";
 import { createSessionRowProvenance } from "../lib/sessions/session-row-provenance.ts";
 import { createSidebarContextLifecycle } from "./app-sidebar-context-lifecycle.ts";
@@ -97,6 +98,12 @@ export function createGatewayHarness(client: GatewayBrowserClient) {
   };
   const listeners = new Set<(next: ApplicationGatewaySnapshot) => void>();
   const eventListeners = new Set<(event: { event: string; payload: unknown }) => void>();
+  const publish = (patch: Partial<ApplicationGatewaySnapshot>) => {
+    snapshot = { ...snapshot, ...patch };
+    for (const listener of listeners) {
+      listener(snapshot);
+    }
+  };
   const gateway = {
     get snapshot() {
       return snapshot;
@@ -123,20 +130,12 @@ export function createGatewayHarness(client: GatewayBrowserClient) {
       if (!snapshot.selfUser) {
         return;
       }
-      snapshot = { ...snapshot, selfUser: { ...snapshot.selfUser, ...patch } };
-      for (const listener of listeners) {
-        listener(snapshot);
-      }
+      publish({ selfUser: { ...snapshot.selfUser, ...patch } });
     },
   } as unknown as ApplicationGateway;
   return {
     gateway,
-    publish(patch: Partial<ApplicationGatewaySnapshot>) {
-      snapshot = { ...snapshot, ...patch };
-      for (const listener of listeners) {
-        listener(snapshot);
-      }
-    },
+    publish,
     publishEvent(event: string, payload: unknown) {
       for (const listener of eventListeners) {
         listener({ event, payload });
@@ -163,15 +162,9 @@ export function createSessionState(agentId: string, keys: string[]): SessionStat
     })),
   } satisfies SessionsListResult;
   return {
+    ...emptySessionState(),
     result,
     agentId,
-    modelOverrides: {},
-    loading: false,
-    error: null,
-    deletedSessions: [],
-    groups: [],
-    groupSettings: [],
-    sectionOrder: [],
   };
 }
 
