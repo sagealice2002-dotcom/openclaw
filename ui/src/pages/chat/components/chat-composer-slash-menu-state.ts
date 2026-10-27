@@ -467,42 +467,6 @@ export function createSlashMenu() {
     return true;
   }
 
-  function handleSlashMenuKeydown(
-    event: KeyboardEvent,
-    state: SlashMenuState,
-    host: SlashMenuHost,
-  ): boolean {
-    if (!state.slashMenuOpen) {
-      return false;
-    }
-    const items = state.slashMenuMode === "args" ? state.slashMenuArgItems : state.slashMenuItems;
-    return handleComposerMenuKeydown(event, {
-      count: items.length,
-      index: state.slashMenuIndex,
-      consumeEmpty: false,
-      close: () => {
-        resetSlashMenuState(state);
-      },
-      move: (index) => {
-        state.slashMenuIndex = index;
-        return getActiveSlashMenuOptionId(state, host.paneId);
-      },
-      select: (key) => {
-        if (state.slashMenuMode === "args") {
-          const arg = state.slashMenuArgItems[state.slashMenuIndex];
-          if (arg !== undefined) {
-            selectSlashArg(arg, state, host, key === "Enter");
-          }
-        } else {
-          const command = state.slashMenuItems[state.slashMenuIndex];
-          if (command) {
-            selectSlashCommand(command, state, host, key === "Tab");
-          }
-        }
-      },
-    });
-  }
-
   return {
     state: presentation,
     update(value: string, host: SlashMenuHost) {
@@ -523,9 +487,38 @@ export function createSlashMenu() {
       // Inline detection can change mode before normal menu handling in this keypress.
       setState((draft) => {
         handled =
-          (sendShortcut !== undefined &&
-            handleInlineSlashArgKeydown(event, draft, host, sendShortcut)) ||
-          handleSlashMenuKeydown(event, draft, host);
+          sendShortcut !== undefined &&
+          handleInlineSlashArgKeydown(event, draft, host, sendShortcut);
+        if (handled || !draft.slashMenuOpen) {
+          return;
+        }
+        const items =
+          draft.slashMenuMode === "args" ? draft.slashMenuArgItems : draft.slashMenuItems;
+        handled = handleComposerMenuKeydown(event, {
+          count: items.length,
+          index: draft.slashMenuIndex,
+          consumeEmpty: false,
+          close: () => {
+            resetSlashMenuState(draft);
+          },
+          move: (index) => {
+            draft.slashMenuIndex = index;
+            return getActiveSlashMenuOptionId(draft, host.paneId);
+          },
+          select: (key) => {
+            if (draft.slashMenuMode === "args") {
+              const arg = draft.slashMenuArgItems[draft.slashMenuIndex];
+              if (arg !== undefined) {
+                selectSlashArg(arg, draft, host, key === "Enter");
+              }
+            } else {
+              const command = draft.slashMenuItems[draft.slashMenuIndex];
+              if (command) {
+                selectSlashCommand(command, draft, host, key === "Tab");
+              }
+            }
+          },
+        });
       });
       return handled;
     },
