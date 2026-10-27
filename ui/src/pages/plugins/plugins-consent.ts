@@ -2,7 +2,6 @@ import { isGatewayProtocolResponseError } from "@openclaw/gateway-client/browser
 import { asOptionalRecord } from "@openclaw/normalization-core/record-coerce";
 import { onCleanup } from "solid-js";
 import { Check } from "typebox/value";
-import type { CapabilityConsentErrorDetails } from "../../../../packages/gateway-protocol/src/capability-consent-error-details.js";
 import {
   PluginsInstallProgressEventSchema,
   type PluginsSetEnabledParams,
@@ -26,11 +25,7 @@ import {
   type PluginMutationResult,
   type PluginsInspectResult,
 } from "../../lib/plugins/index.ts";
-import type {
-  PluginConsentInspectionRead,
-  PluginConsentIntent,
-  PluginConsentState,
-} from "./consent-dialog.tsx";
+import type { PluginConsentInspectionRead, PluginConsentState } from "./consent-dialog.tsx";
 import { readPluginInstallPolicyWarning } from "./install-policy-warning.ts";
 import type { PluginInstallProgress } from "./install-progress.ts";
 import { pluginRowKey, type PluginRowMessage } from "./plugin-row-message.tsx";
@@ -231,34 +226,6 @@ export function createPluginsConsent(host: {
     } else {
       await host.presentMutation({ scope, rowKey, action: options.action, result });
     }
-  }
-
-  function open(
-    intent: PluginConsentIntent,
-    pluginId: string,
-    details?: CapabilityConsentErrorDetails,
-  ): void {
-    if (!host.canMutate()) {
-      return;
-    }
-    const plugin = host.getResult()?.plugins.find((entry) => entry.id === pluginId);
-    host.closeDetails();
-    retireInspection();
-    state.inspection = null;
-    state.inspectionError = null;
-    state.inspectionLoading = true;
-    state.consent = {
-      intent,
-      pluginId,
-      fallback: {
-        name: plugin?.name ?? pluginId,
-        ...(plugin?.version ? { version: plugin.version } : {}),
-        ...(plugin?.origin === "official" ? { official: true } : {}),
-      },
-      ...(details ? { details } : {}),
-    };
-    host.onChange();
-    void inspect();
   }
 
   function close(): void {
@@ -541,7 +508,28 @@ export function createPluginsConsent(host: {
         const runtime = asOptionalRecord(details?.runtime);
         const consent = readPluginCapabilityConsentError(error);
         if (action !== "disable" && runtime?.committed !== true && consent && host.canMutate()) {
-          open({ kind: action, pluginId, rowKey }, consent.pluginId, consent);
+          if (!host.canMutate()) {
+            return;
+          }
+          const consentPluginId = consent.pluginId;
+          const plugin = host.getResult()?.plugins.find((entry) => entry.id === consentPluginId);
+          host.closeDetails();
+          retireInspection();
+          state.inspection = null;
+          state.inspectionError = null;
+          state.inspectionLoading = true;
+          state.consent = {
+            intent: { kind: action, pluginId, rowKey },
+            pluginId: consentPluginId,
+            fallback: {
+              name: plugin?.name ?? consentPluginId,
+              ...(plugin?.version ? { version: plugin.version } : {}),
+              ...(plugin?.origin === "official" ? { official: true } : {}),
+            },
+            ...(consent ? { details: consent } : {}),
+          };
+          host.onChange();
+          void inspect();
           return;
         }
         const savedInstall = host.getMessages()[rowKey]?.savedInstall;
