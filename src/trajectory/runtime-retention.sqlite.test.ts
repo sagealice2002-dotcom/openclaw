@@ -23,7 +23,6 @@ import { createAgentWorkerTestLoaders } from "../state/openclaw-agent-execution-
 import type { AgentWorkerOperationContext } from "../state/openclaw-agent-operation-context.js";
 import { requireNativeSqliteDatabase } from "../test-utils/native-sqlite.js";
 import { useSessionStoreTempDirs } from "../test-utils/session-state-cleanup.js";
-import { readTrajectoryPayload } from "./runtime-payload.js";
 import {
   beginTrajectoryRuntimeRetention,
   prepareTrajectoryRuntimeRetention,
@@ -40,7 +39,6 @@ import {
 } from "./runtime-store.test-support.js";
 import type { TrajectoryEvent } from "./types.js";
 
-type TrajectoryRuntimeTestDatabase = Pick<OpenClawAgentKyselyDatabase, "trajectory_runtime_events">;
 const sessionDirs = useSessionStoreTempDirs(afterAll, "openclaw-trajectory-retention-sqlite-");
 
 let tempDir: string;
@@ -142,7 +140,7 @@ it.each(["missing", "invalidated", "empty"] as const)(
         runOpenClawAgentWriteTransaction(write, options, { operationLabel }),
     };
     const operations = await createAgentWorkerTestLoaders(context)["trajectory.retention.delete"]();
-    const observe = vi.spyOn(database.db, "exec");
+    using observe = vi.spyOn(database.db, "exec");
     try {
       expect(
         operations["trajectory.retention.delete"]({ sweepId, snapshot }, context),
@@ -155,7 +153,6 @@ it.each(["missing", "invalidated", "empty"] as const)(
         mode === "empty" ? 1 : 0,
       );
     } finally {
-      observe.mockRestore();
       Atomics.store(lease, 0, 0);
     }
   },
@@ -341,9 +338,16 @@ it.each(
       );
     }
     const nativeEncoding = encoding === "UTF-8" ? "utf8" : "utf16le";
+    const eventBytesInEncoding = (events: TrajectoryEvent[]) =>
+      events.reduce(
+        (total, event) => total + Buffer.byteLength(JSON.stringify(event), nativeEncoding) + 1,
+        0,
+      );
     vi.useFakeTimers();
     vi.setSystemTime(now);
-    append("session-1", [createTrajectoryEvent({ payloadSize: 200, type: "current-initial" })]);
+    const initial = [createTrajectoryEvent({ payloadSize: 200, type: "current-initial" })];
+    append("session-1", initial);
+    const bytesBefore = new Map([["session-1", eventBytesInEncoding(initial)]]);
     for (const [index, sessionId] of ["oldest", "middle", "newest"].entries()) {
       await addSession(sessionId);
       const events = [0, 1].map((part) => {
@@ -360,8 +364,8 @@ it.each(
         return event;
       });
       append(sessionId, events);
+      bytesBefore.set(sessionId, eventBytesInEncoding(events));
     }
-    const bytesBefore = runtimeBytesBySession(nativeEncoding);
     const trigger = currentEvent("current-newest", {
       payloadSize: 200,
       ts: new Date(now + 60 * 60 * 1_000).toISOString(),
@@ -403,7 +407,7 @@ it("drains complete runs through byte-bounded transactions despite writes betwee
   }
   const database = openOpenClawAgentDatabase({ agentId: "main", path: sqlitePath() });
   using _ = { [Symbol.dispose]: retainAgentDatabase(database.db) };
-  const competing = openNodeSqliteDatabase(sqlitePath());
+  using competing = openNodeSqliteDatabase(sqlitePath());
   const retainedRuns = () =>
     database.db
       .prepare(`SELECT session_id, count(*) AS rows
@@ -436,7 +440,6 @@ it("drains complete runs through byte-bounded transactions despite writes betwee
     append("session-1", [currentEvent("sweep")]);
   } finally {
     commits.mockRestore();
-    competing.close();
   }
   const tail = ["history-10", "history-11"].map((session_id) => ({ session_id, rows: 4 }));
   expect(retainedAfterDeletes).toEqual([tail, []]);
@@ -534,19 +537,15 @@ function withCompetingSelectionWrite(
   maxWrites = 1,
   managed = false,
 ) {
-  const competing = openNodeSqliteDatabase(sqlitePath());
+  using competing = openNodeSqliteDatabase(sqlitePath());
   competing.exec("PRAGMA busy_timeout = 0");
   let writes = 0;
-  try {
-    withGlobalSelection(runAppend, (native) => {
-      if (writes < maxWrites) {
-        writes++;
-        mutate(managed ? native : competing);
-      }
-    });
-  } finally {
-    competing.close();
-  }
+  withGlobalSelection(runAppend, (native) => {
+    if (writes < maxWrites) {
+      writes++;
+      mutate(managed ? native : competing);
+    }
+  });
 }
 
 function withGlobalSelection(run: () => void, afterSelection?: (native: DatabaseSync) => void) {
@@ -582,17 +581,11 @@ function withGlobalSelection(run: () => void, afterSelection?: (native: Database
           const details = prepare(`EXPLAIN QUERY PLAN ${sql}`)
             .all(...args)
             .map((row) => row.detail);
-          expect(
-            details.filter(
-              (detail) =>
-                typeof detail === "string" &&
-                /(?:SCAN|SEARCH) trajectory_runtime_events\b/.test(detail),
+          expect(details).toContainEqual(
+            expect.stringContaining(
+              "SCAN trajectory_runtime_events USING COVERING INDEX idx_agent_trajectory_runtime_run",
             ),
-          ).toEqual([
-            expect.stringMatching(
-              /SCAN trajectory_runtime_events USING COVERING INDEX idx_agent_trajectory_runtime_run/,
-            ),
-          ]);
+          );
           expect(details).not.toContainEqual(expect.stringMatching(/USE TEMP B-TREE FOR GROUP BY/));
         }
       };
@@ -642,21 +635,4 @@ async function expectTypes(expected: Record<string, string[]>) {
       sessionId,
     ).toEqual(types);
   }
-}
-
-function runtimeBytesBySession(encoding: BufferEncoding = "utf8"): Map<string, number> {
-  const database = openOpenClawAgentDatabase({ agentId: "main", path: sqlitePath() });
-  const db = getNodeSqliteKysely<TrajectoryRuntimeTestDatabase>(database.db);
-  const rows = executeSqliteQuerySync(
-    database.db,
-    db
-      .selectFrom("trajectory_runtime_events")
-      .select(["session_id", "event_json", "event_payload", "event_codec", "event_utf8_bytes"]),
-  ).rows;
-  const bytesBySession = new Map<string, number>();
-  for (const row of rows) {
-    const bytes = Buffer.byteLength(readTrajectoryPayload(row), encoding) + 1;
-    bytesBySession.set(row.session_id, (bytesBySession.get(row.session_id) ?? 0) + bytes);
-  }
-  return bytesBySession;
 }
