@@ -1,4 +1,5 @@
 import { Type } from "typebox";
+import { copyInternalToolResultState } from "../../packages/agent-core/src/internal-hooks.js";
 import { getAgentToolAssistantTurnId } from "../../packages/agent-core/src/tool-execution-context.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { finalizeAgentToolAvailability } from "./agent-tool-availability.js";
@@ -30,7 +31,6 @@ import {
 import { recordCodeModeToolOutcome } from "./code-mode-tool-outcome.js";
 import { captureAgentPluginRuntimeRefresh } from "./plugin-runtime-refresh.js";
 import type { AgentToolUpdateCallback } from "./runtime/index.js";
-import { copyInternalToolResultState } from "./runtime/internal-hooks.js";
 import { executionTitleSchema } from "./schema/typebox.js";
 import { isCoreCodingSurfaceToolName } from "./tool-catalog.js";
 import { resolveToolResultBudget } from "./tool-result-limits.js";
