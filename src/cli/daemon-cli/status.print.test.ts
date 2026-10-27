@@ -328,7 +328,6 @@ describe("printDaemonStatus", () => {
     expectMockLineContains(runtime.log, job.label);
     expectMockLineContains(runtime.log, job.program);
     expectMockLineContains(runtime.log, "Report only; left unchanged.");
-    expect(output(runtime.error)).not.toContain(job.label);
     expect(runtime.error).not.toHaveBeenCalled();
     expect(output()).not.toContain("Listed lifecycle jobs may be responsible");
   });
