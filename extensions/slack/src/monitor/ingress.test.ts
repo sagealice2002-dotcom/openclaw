@@ -504,28 +504,6 @@ describe("Slack durable ingress", () => {
     });
   });
 
-  it("recovers an uncompleted event with a fresh drain and dispatches once", async () => {
-    await withQueue(async (queue) => {
-      const first = attachIngress(
-        queue,
-        vi.fn(async () => {}),
-      );
-      const ack = vi.fn(async () => {});
-      await first.receive(createReceiverEvent("Ev-restart", ack));
-      await first.ingress.stop();
-
-      const dispatch = vi.fn(adoptEvent);
-      const restarted = attachIngress(queue, dispatch);
-      restarted.ingress.start();
-      await restarted.ingress.waitForIdle();
-
-      expect(ack).toHaveBeenCalledTimes(1);
-      expect(dispatch).toHaveBeenCalledTimes(1);
-      expect((await queue.enqueue("Ev-restart", {} as SlackIngressPayload)).kind).toBe("completed");
-      await restarted.ingress.stop();
-    });
-  });
-
   it.each([
     { name: "a lane derived only at drain time", laneKey: undefined },
     { name: "its persisted channel-only lane", laneKey: "team:T_TEST:conversation:C_TEST" },

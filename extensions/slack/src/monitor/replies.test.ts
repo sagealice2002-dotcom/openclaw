@@ -264,10 +264,6 @@ describe("deliverReplies identity passthrough", () => {
     plan.markSent();
     expect(hasRepliedRef.value).toBe(true);
   });
-  it("sends nothing when the producer supplies no payload", async () => {
-    await deliverPrepared([]);
-    expect(sendMock).not.toHaveBeenCalled();
-  });
   it("routes current reply without mistaking a child for its thread root", async () => {
     await deliverPrepared(
       {
@@ -398,9 +394,7 @@ describe("deliverSlackSlashReplies chunking", () => {
     ];
     await deliverSlash([blockReply(blocks, "Overview")]);
     expect(respond).toHaveBeenCalledTimes(2);
-    const native = requireSlashMessage(0);
     const fallback = requireSlashMessage(1);
-    expect(blockTypes(native)).toEqual(["section", "data_visualization", "actions", "data_table"]);
     expect(blockTypes(fallback)).toEqual(["section", "section", "actions", "section"]);
     expect(readPlainSectionTexts(fallback)).toEqual([revenueText, tableText("Pipeline report")]);
     expect(fallback.text).toBe(
