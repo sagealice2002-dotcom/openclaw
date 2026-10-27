@@ -164,12 +164,6 @@ export function createRuntimeConfigEditor(
     isDisposed: () => disposed,
   });
 
-  const ensureLoaded = async () => {
-    if (!state.configSnapshot) {
-      await loadConfigOnce(() => loadConfig(state, { draftWrites: writes }));
-    }
-    appliedRefresh.reconcile();
-  };
   // Schema reads use the same read-access policy as the settings pages.
   const canLoadConfigSchema = () => {
     const snapshot = gateway.snapshot;
@@ -178,12 +172,6 @@ export function createRuntimeConfigEditor(
     }
     return hasOperatorReadAccess(snapshot.hello?.auth ?? null);
   };
-  const ensureSchemaLoaded = async () => {
-    if (!state.configSchema && canLoadConfigSchema()) {
-      await loadSchema();
-    }
-  };
-
   return {
     snapshotOwner: writes,
     get state() {
@@ -204,8 +192,17 @@ export function createRuntimeConfigEditor(
     get canOpenFile() {
       return canCallConfigMethod("config.openFile", { requireAdvertisement: false });
     },
-    ensureLoaded,
-    ensureSchemaLoaded,
+    async ensureLoaded() {
+      if (!state.configSnapshot) {
+        await loadConfigOnce(() => loadConfig(state, { draftWrites: writes }));
+      }
+      appliedRefresh.reconcile();
+    },
+    async ensureSchemaLoaded() {
+      if (!state.configSchema && canLoadConfigSchema()) {
+        await loadSchema();
+      }
+    },
     refresh: async (options?: { background?: boolean }) => {
       appliedRefresh.cancel();
       try {

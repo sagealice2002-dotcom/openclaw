@@ -47,12 +47,7 @@ function assertRange(evidence: Pick<Evidence, "start_line" | "end_line">): void 
 }
 
 /** Build a deterministic descriptor without conflating equal bytes from different origins. */
-export function describeSource(evidence: Evidence): {
-  id: string;
-  path: string;
-  raw: string;
-  descriptor: SourceDescriptor;
-} {
+export function describeSource(evidence: Evidence) {
   if (!Check(Evidence, evidence)) {
     throw new Error("Invalid source evidence.");
   }
