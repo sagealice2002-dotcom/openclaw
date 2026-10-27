@@ -1577,7 +1577,6 @@ src/plugins/official-external-plugin-catalog-hosted.ts
 src/plugins/official-external-plugin-catalog-snapshot-store.ts
 src/plugins/official-external-plugin-catalog-source.ts
 src/plugins/official-external-plugin-catalog.ts
-src/plugins/official-external-provider-endpoints.ts
 src/plugins/package-compat.ts
 src/plugins/package-entry-resolution.ts
 src/plugins/package-entrypoints.ts
