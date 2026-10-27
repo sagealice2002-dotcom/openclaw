@@ -1,7 +1,7 @@
 import { createMessageReceiptFromOutboundResults } from "openclaw/plugin-sdk/channel-outbound";
 import { PlatformMessageNotDispatchedError } from "openclaw/plugin-sdk/error-runtime";
 import { createReplyDispatcher } from "openclaw/plugin-sdk/reply-runtime";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { assert, beforeEach, describe, expect, it, vi } from "vitest";
 
 const sendMock = vi.fn();
 const respond = vi.fn<Parameters<typeof deliverSlackSlashReplies>[0]["respond"]>();
@@ -186,9 +186,7 @@ function largePortableTablePresentation(rowLength = 110) {
 }
 function requireSendCall(index = 0) {
   const call = sendMock.mock.calls[index] as [string, string, Record<string, unknown>] | undefined;
-  if (!call) {
-    throw new Error(`sendMessageSlack call ${index} missing`);
-  }
+  assert(call, `sendMessageSlack call ${index} missing`);
   return call;
 }
 function acceptedSlackSendResult(messageId: string, kind: "media" | "text" | "card" = "media") {
@@ -219,9 +217,7 @@ type SlashTestMessage = {
 };
 function requireSlashMessage(index = 0): SlashTestMessage {
   const message = respond.mock.calls[index]?.[0] as SlashTestMessage | undefined;
-  if (!message) {
-    throw new Error(`Slack response call ${String(index)} missing`);
-  }
+  assert(message, `Slack response call ${String(index)} missing`);
   return message;
 }
 function slashMessages(count: number, start = 0) {
@@ -585,10 +581,10 @@ describe("deliverReplies message_sent hook", () => {
       ],
     });
     const lastSegment = params.replies[0]?.resolveDelivery().segments.at(-1);
-    expect(lastSegment?.kind).toBe("blocks");
-    if (lastSegment?.kind !== "blocks" || !lastSegment.blocks[0]) {
-      throw new Error("expected the later block segment");
-    }
+    assert(
+      lastSegment?.kind === "blocks" && lastSegment.blocks[0],
+      "expected the later block segment",
+    );
     Object.defineProperty(lastSegment.blocks[0], "text", {
       get() {
         throw failure;

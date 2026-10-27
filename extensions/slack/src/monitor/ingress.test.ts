@@ -1,3 +1,4 @@
+import { setImmediate as nextTurn, setTimeout as delay } from "node:timers/promises";
 import type { ReceiverEvent } from "@slack/bolt";
 import type { WebClientOptions } from "@slack/web-api";
 import { closeOpenClawStateDatabaseForTest } from "openclaw/plugin-sdk/channel-ingress-test-runtime";
@@ -241,9 +242,7 @@ describe("Slack durable ingress", () => {
         );
         // The original claim can outlive the pre-adoption watchdog without
         // restarting the duplicate or letting a channel migration overtake it.
-        await new Promise((resolve) => {
-          setTimeout(resolve, 160);
-        });
+        await delay(160);
         expect(starts).toEqual(["Ev-independent"]);
         expect(processEvent).toHaveBeenCalledTimes(2);
         duplicate.resolve(true);
@@ -396,9 +395,7 @@ describe("Slack durable ingress", () => {
         await vi.waitFor(() => expect(processEvent).toHaveBeenCalledTimes(2));
         expect(starts).toEqual(ids.slice(0, 1));
 
-        await new Promise<void>((resolve) => {
-          setTimeout(resolve, 120);
-        });
+        await delay(120);
         await receive(createReceiverEvent(ids[2]!));
         await vi.waitFor(() => expect(processEvent).toHaveBeenCalledTimes(3));
         expect([(await queue.listClaims()).map((claim) => claim.id), starts]).toEqual([
@@ -475,9 +472,7 @@ describe("Slack durable ingress", () => {
             ]),
           );
         }
-        await new Promise<void>((resolve) => {
-          setImmediate(resolve);
-        });
+        await nextTurn();
         expect(starts).toEqual([firstType]);
         gate.resolve();
         await ingress.waitForIdle();
