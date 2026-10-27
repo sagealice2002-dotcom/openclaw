@@ -168,9 +168,9 @@ export function createSessionScopedOperations(host: SessionScopedOperationsHost)
 
   return {
     async compact(
-    key: string,
-    options: { agentId?: string | null } = {},
-  ): Promise<SessionCompactResult> {
+      key: string,
+      options: { agentId?: string | null } = {},
+    ): Promise<SessionCompactResult> {
       const scope = host.connection.capture();
       if (!scope) {
         throw new Error("Session compaction requires an active Gateway connection");
@@ -194,7 +194,10 @@ export function createSessionScopedOperations(host: SessionScopedOperationsHost)
         return null;
       }
       try {
-        const result = await scope.client.request<SessionsRecoverResult>("sessions.recover", params);
+        const result = await scope.client.request<SessionsRecoverResult>(
+          "sessions.recover",
+          params,
+        );
         if (!result?.key?.trim() || !result?.sessionId?.trim()) {
           throw new Error("sessions.recover returned no session identity");
         }
@@ -216,10 +219,10 @@ export function createSessionScopedOperations(host: SessionScopedOperationsHost)
     rewind,
     setFile,
     async subscribeMessages(
-    key: string,
-    options: GatewaySessionMessageSubscriptionOptions = {},
-    startup?: { beforeHello?: true },
-  ): Promise<SessionMessageSubscription> {
+      key: string,
+      options: GatewaySessionMessageSubscriptionOptions = {},
+      startup?: { beforeHello?: true },
+    ): Promise<SessionMessageSubscription> {
       const scope = host.connection.capture();
       const beforeHello =
         startup?.beforeHello === true && host.gateway.snapshot.phase !== "connected";
