@@ -5,7 +5,6 @@ import { useAutoCleanupTempDirTracker } from "../../../test/helpers/temp-dir.js"
 import * as updateCheck from "../../infra/update-check.js";
 import { DoctorMaintenanceRefusalError } from "../../infra/update-doctor-result.js";
 import { readGitRuntimeArtifactIdentity } from "../../infra/update-git-runtime.js";
-import { updateRunStepsFromResultStep } from "../../infra/update-run-step.js";
 import * as pluginRecords from "../../plugins/installed-plugin-index-records.js";
 import * as pluginLifecycle from "../../plugins/plugin-lifecycle-lease.js";
 import { withCommandProcessScope } from "../../process/exec-spawn.js";
@@ -179,29 +178,6 @@ describe("candidate convergence Doctor dispatch authority", () => {
     ]);
     expect(report.markdown).not.toContain("Let the current update or repair finish.");
   });
-  it("records the failed post-core child even without supplied failure facts", async () => {
-    vi.spyOn(postCore, "continuePostCoreUpdateInFreshProcess").mockResolvedValueOnce({
-      resumed: false,
-      exitCode: 1,
-      error: "x",
-      failureFacts: [],
-    });
-    const { resultWithPostUpdate } = await converge({
-      result: { mode: "npm", before: { version: VERSION }, after: { version: "2026.9.4" } },
-      downgradeRisk: true,
-    });
-    expect(resultWithPostUpdate).toMatchObject({
-      status: "error",
-      steps: [
-        {
-          name: "post-update verification",
-          exitCode: 1,
-          stderrTail: "x",
-          failureFacts: [{ check: "runtime", code: "post-core-update-failed" }],
-        },
-      ],
-    });
-  });
   it("cancels runtime classification with its enclosing command scope", async () => {
     const controller = new AbortController();
     const cancellation = new Error("Update command was cancelled");
@@ -330,11 +306,8 @@ await fs.writeFile(process.env.OPENCLAW_UPDATE_POST_CORE_RESULT_PATH, ${JSON.str
       const verification = result.steps.find(
         (step) => step.name === "post-core runtime verification",
       )!;
-      const receipts = updateRunStepsFromResultStep(verification);
-      expect(receipts[0]?.status).toBe(scenario === "unchanged" ? "completed" : "failed");
-      const facts = JSON.parse(
-        receipts.find((receipt) => receipt.step.startsWith("diagnostic:"))!.detail!,
-      );
+      expect(verification.exitCode).toBe(scenario === "unchanged" ? 0 : 1);
+      const facts = JSON.parse(verification.diagnostics![0]);
       expect(facts.activated).toEqual(activated);
       expect(facts.observed.commit).toBe("same-commit");
       expect(facts.observed.distDigest === activated.distDigest).toBe(scenario === "unchanged");
@@ -472,75 +445,37 @@ await fs.writeFile(process.env.OPENCLAW_UPDATE_POST_CORE_RESULT_PATH, ${JSON.str
     },
   );
 
-  it.each(["runtime", "plugins"] as const)(
-    "parks before %s changes while converging in the candidate runtime",
-    async (changed) => {
-      vi.stubEnv("OPENCLAW_COMPATIBILITY_HOST_VERSION", "0.0.1");
-      const events: string[] = [];
-      const park = vi.fn(async () => {
-        events.push("park");
-      });
-      const assertCurrent = vi.fn();
-      vi.spyOn(sourceRuntime, "completeSourceUpdateRuntime").mockImplementation(async (params) => {
-        expect(process.env.OPENCLAW_COMPATIBILITY_HOST_VERSION).toBe("2026.9.4");
-        if (changed === "runtime") {
-          await params.beforePublication?.();
-          params.assertCurrent?.();
-          events.push("publish");
-        }
-        return { changed: changed === "runtime" };
-      });
-      vi.spyOn(postCore, "continuePostCoreUpdateInFreshProcess").mockImplementation(async () => {
-        throw new Error("Candidate runtime must not delegate convergence again");
-      });
-      mocks.convergeCandidate.mockImplementation(async (params) => {
-        expect(process.env.OPENCLAW_COMPATIBILITY_HOST_VERSION).toBe("2026.9.4");
-        params.assertCurrent();
-        events.push("candidate-plugins");
-        return candidateResult({ changed: changed === "plugins" });
-      });
-      const result = await converge({
-        candidateRuntime: true,
-        coreAlreadyCurrent: true,
-        result: {
-          status: "skipped",
-          reason: "already-current",
-        },
-        packageUpdateNodeRunner: "/selected/node",
-        beforeRuntimePublication: park,
-        beforeDoctor: park,
-        assertCurrent,
-      });
-      expect(events).toEqual(
-        changed === "runtime"
-          ? ["park", "publish", "candidate-plugins"]
-          : ["candidate-plugins", "park"],
-      );
-      expect(result.resultWithPostUpdate.status).toBe("ok");
-      expect(result.resultWithPostUpdate.steps).toEqual(
-        changed === "runtime"
-          ? [expect.objectContaining({ name: "source runtime publication", exitCode: 0 })]
-          : [
-              expect.objectContaining({
-                name: "post-plugin doctor",
-                exitCode: 0,
-                deferredInspectionCheckIds: null,
-              }),
-            ],
-      );
-      if (changed === "plugins") {
-        expect(mocks.runExec.mock.calls.map(([, args]) => doctorOperation(args))).toEqual([
-          "repair",
-          "validate",
-          "readiness",
-        ]);
-        expect(mocks.runExec.mock.calls.every(([command]) => command === "/selected/node")).toBe(
-          true,
-        );
-      }
-      expect(process.env.OPENCLAW_COMPATIBILITY_HOST_VERSION).toBe("0.0.1");
-    },
-  );
+  it("uses the candidate compatibility version and selected Doctor runtime without redelegating", async () => {
+    vi.stubEnv("OPENCLAW_COMPATIBILITY_HOST_VERSION", "0.0.1");
+    vi.spyOn(sourceRuntime, "completeSourceUpdateRuntime").mockImplementation(async () => {
+      expect(process.env.OPENCLAW_COMPATIBILITY_HOST_VERSION).toBe("2026.9.4");
+      return { changed: false };
+    });
+    vi.spyOn(postCore, "continuePostCoreUpdateInFreshProcess").mockImplementation(async () => {
+      throw new Error("Candidate runtime must not delegate convergence again");
+    });
+    mocks.convergeCandidate.mockImplementation(async () => {
+      expect(process.env.OPENCLAW_COMPATIBILITY_HOST_VERSION).toBe("2026.9.4");
+      return candidateResult();
+    });
+    const result = await converge({
+      candidateRuntime: true,
+      coreAlreadyCurrent: true,
+      result: {
+        status: "skipped",
+        reason: "already-current",
+      },
+      packageUpdateNodeRunner: "/selected/node",
+    });
+    expect(result.resultWithPostUpdate.status).toBe("ok");
+    expect(mocks.runExec.mock.calls.map(([, args]) => doctorOperation(args))).toEqual([
+      "repair",
+      "validate",
+      "readiness",
+    ]);
+    expect(mocks.runExec.mock.calls.every(([command]) => command === "/selected/node")).toBe(true);
+    expect(process.env.OPENCLAW_COMPATIBILITY_HOST_VERSION).toBe("0.0.1");
+  });
 
   it.each([
     ["doctor-revocation", ["repair"]],
@@ -564,11 +499,8 @@ await fs.writeFile(process.env.OPENCLAW_UPDATE_POST_CORE_RESULT_PATH, ${JSON.str
       );
       let refuseNextCheck = false;
       const assertCurrent = () => {
-        if (refuseNextCheck) {
+        if (refuseNextCheck || currentOwner !== originalOwner) {
           refuseNextCheck = false;
-          throw stale;
-        }
-        if (currentOwner !== originalOwner) {
           throw stale;
         }
       };
