@@ -9,6 +9,7 @@ const routeName = z.enum(["chat", "dashboard"]);
 const auditSchema = z.object({
   observations: z.array(
     z.object({
+      arm: z.enum(["base", "candidate"]).optional(),
       route: routeName,
       run: z.string().regex(/^(?:cold|warm-\d{2,})$/u),
       inspected: z.literal(true),
@@ -22,7 +23,11 @@ const reportSchema = z
   .object({
     results: z.array(
       z
-        .object({ route: routeName, runs: z.array(z.object({ warm: z.boolean() }).passthrough()) })
+        .object({
+          arm: z.string().optional(),
+          route: routeName,
+          runs: z.array(z.object({ warm: z.boolean() }).passthrough()),
+        })
         .passthrough(),
     ),
   })
@@ -40,7 +45,7 @@ export async function applyWarmReloadPaintAudit(reportPath: string, auditPath: s
   const audit = auditSchema.parse(JSON.parse(await readFile(auditPath, "utf8")));
   const observations = new Map<string, (typeof audit.observations)[number]>();
   for (const observation of audit.observations) {
-    const key = `${observation.route}/${observation.run}`;
+    const key = `${observation.arm ? `${observation.arm}/` : ""}${observation.route}/${observation.run}`;
     if (observations.has(key)) {
       throw new Error(`Duplicate paint observation: ${key}`);
     }
@@ -51,7 +56,7 @@ export async function applyWarmReloadPaintAudit(reportPath: string, auditPath: s
     let warmIndex = 0;
     for (const run of result.runs) {
       const name = run.warm ? `warm-${String(++warmIndex).padStart(2, "0")}` : "cold";
-      const key = `${result.route}/${name}`;
+      const key = `${result.arm && result.arm !== "single" ? `${result.arm}/` : ""}${result.route}/${name}`;
       const observation = observations.get(key);
       if (!observation || covered.has(key)) {
         throw new Error(`Missing or duplicate capture observation: ${key}`);
@@ -101,6 +106,7 @@ export async function applyWarmReloadPaintAudit(reportPath: string, auditPath: s
       if (result.route === "dashboard" && !observation.dashboardFrame) {
         throw new Error(`Dashboard content observation is required: ${key}`);
       }
+      run.outputDir = runDirectory;
       run.auditedPaint = {
         inspected: true,
         navigationTimeOrigin: capture.navigationTimeOrigin,
