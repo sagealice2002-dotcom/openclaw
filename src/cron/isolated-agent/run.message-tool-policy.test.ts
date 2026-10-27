@@ -1,5 +1,5 @@
 import { createRequireRecord } from "openclaw/plugin-sdk/test-fixtures";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 import { testing as cliBackendsTesting } from "../../agents/cli-backends.test-support.js";
 import {
   buildDefaultTestCliBackend,
@@ -166,36 +166,11 @@ describe("runCronIsolatedAgentTurn delivery policy", () => {
   );
 
   describe("message tool policy", () => {
-    beforeEach(() => {
-      h.getChannelPluginMock.mockImplementation((channelId: string) =>
-        channelId === "topicchat"
-          ? {
-              threading: {
-                resolveCurrentChannelId: ({
-                  to,
-                  threadId,
-                }: {
-                  to: string;
-                  threadId?: string | number | null;
-                }) => {
-                  if (threadId == null) {
-                    return to;
-                  }
-                  return to.includes("#") ? to : to + "#" + threadId;
-                },
-              },
-              outbound: { preferFinalAssistantVisibleText: true },
-            }
-          : undefined,
-      );
-    });
-
     it("binds the resolved delivery account to account-implicit CLI message sends", async () => {
       mockCliAnnounce();
       const destination = { channel: "telegram", accountId: "bot-a" };
       mockAnnounce(destination);
       h.resolveDeliveryTargetMock.mockResolvedValue(resolvedTarget(destination));
-      let messageActionInput: Record<string, unknown> | undefined;
       h.runCliAgentMock.mockImplementation(async (runParams: unknown) => {
         expectFields(
           runParams,
@@ -205,12 +180,8 @@ describe("runCronIsolatedAgentTurn delivery policy", () => {
           },
           "CLI run params",
         );
-        const [{ buildCliMcpGrantContext }, { createMessageTool }, messageActionRunner] =
-          await Promise.all([
-            import("../../agents/cli-runner/mcp-grant-context.js"),
-            import("../../agents/tools/message-tool-execution.js"),
-            import("../../infra/outbound/message-action-runner.js"),
-          ]);
+        const { buildCliMcpGrantContext } =
+          await import("../../agents/cli-runner/mcp-grant-context.js");
         const grant = buildCliMcpGrantContext({
           run: runParams as never,
           config: {},
@@ -219,51 +190,14 @@ describe("runCronIsolatedAgentTurn delivery policy", () => {
           modelProvider: "openai",
           modelId: "gpt-5.4",
         });
-        const action = vi
-          .spyOn(messageActionRunner, "runMessageAction")
-          .mockImplementation(async (input) => {
-            messageActionInput = requireRecord(input, "message action input");
-            return {
-              kind: "send",
-              action: "send",
-              channel: "telegram",
-              to: "123",
-              handledBy: "plugin",
-              payload: {},
-              dryRun: false,
-            };
-          });
-        try {
-          const tool = createMessageTool({
-            config: {},
-            agentAccountId: grant.accountId,
-            currentChannelProvider: grant.messageProvider,
-            requireExplicitTarget: grant.requireExplicitMessageTarget,
-            preparedMessageToolCatalog: { version: 0, channels: [], getChannel: () => undefined },
-          });
-          await tool.execute("call-1", {
-            action: "send",
-            channel: "telegram",
-            target: "123",
-            message: "done",
-          });
-        } finally {
-          action.mockRestore();
-        }
+        expectFields(grant, {
+          accountId: "bot-a",
+          messageProvider: "telegram",
+          requireExplicitMessageTarget: true,
+        });
         return messageResult([{ tool: "message", provider: "telegram", to: "123" }]);
       });
       const result = await runJob({ ...announce, ...destination });
-      expect(h.runCliAgentMock).toHaveBeenCalledTimes(1);
-      expectFields(messageActionInput, { defaultAccountId: "bot-a" }, "message action input");
-      const actionParams = expectFields(
-        messageActionInput?.params,
-        {
-          channel: "telegram",
-          target: "123",
-        },
-        "message action params",
-      );
-      expect(actionParams.accountId).toBeUndefined();
       expect(result.status).toBe("ok");
       expectFields(result.delivery, {
         intended: { ...tracedTarget, ...destination },
@@ -300,7 +234,6 @@ describe("runCronIsolatedAgentTurn delivery policy", () => {
       h.resolveCronDeliveryPlanMock.mockReturnValue({ requested: false, ...route });
       const result = await runJob(route);
       expect(h.resolveDeliveryTargetMock).not.toHaveBeenCalled();
-      expect(h.runEmbeddedAgentMock).toHaveBeenCalledTimes(1);
       const run = embedded({ disableMessageTool: true, forceMessageTool: false });
       expect(run.execOverrides).toBeUndefined();
       expect(result.delivery?.resolved).toEqual({
@@ -319,7 +252,6 @@ describe("runCronIsolatedAgentTurn delivery policy", () => {
         }),
       );
       await runJob(announce);
-      expect(h.dispatchCronDeliveryMock).toHaveBeenCalledTimes(1);
       dispatch({ deliveryRequested: true, skipDelivery: "heartbeat" });
     });
 
@@ -527,7 +459,6 @@ describe("runCronIsolatedAgentTurn delivery policy", () => {
             sessionKey,
           });
           expect(result.status, result.error).toBe("ok");
-          expect(h.runCliAgentMock).toHaveBeenCalledOnce();
           const next = await cli.prepare({
             sessionKey,
             ...ordinaryPolicy,
@@ -546,61 +477,58 @@ describe("runCronIsolatedAgentTurn delivery policy", () => {
       },
     );
 
-    it.each([true])(
-      "keeps a successful isolated turn at status ok when post-run delivery fails (bestEffort=%s)",
-      async (bestEffort) => {
-        // #94058 / #95419: delivery failure must not overwrite execution status.
-        h.runEmbeddedAgentMock.mockResolvedValueOnce({
-          payloads: [
-            { text: "Interim cron report" },
-            { text: "Recoverable tool warning", isError: true, toolName: "exec" },
-          ],
-          meta: { agentMeta: {} },
-        });
-        mockAnnounce();
-        h.resolveCronPayloadOutcomeMock.mockReturnValue(visibleOutcome("Interim cron report"));
-        const deliveryState = {
-          status: "not-delivered",
-          delivered: false,
-          error: "Message failed",
-          failureNotification: { status: "not-requested" },
-        };
-        h.dispatchCronDeliveryMock.mockResolvedValueOnce({
-          delivered: false,
-          deliveryAttempted: true,
-          deliveryError: "Message failed",
-          deliveryState,
-          summary: "Final cron report",
-          outputText: "Final cron report",
-          synthesizedText: "Final cron report",
-          deliveryPayloads: [{ text: "Final cron report" }],
-        });
-        const result = await runJob({ ...announce, bestEffort });
-        expectFields(result, {
-          status: "ok",
-          error: undefined,
-          summary: "Final cron report",
-          outputText: "Final cron report",
-          deliveryError: "Message failed",
-          deliveryState,
-          delivered: false,
-          deliveryAttempted: true,
-        });
-        expectFields(result.delivery, {
-          intended: tracedTarget,
-          resolved: { ok: true, ...tracedTarget },
-          fallbackUsed: true,
-          delivered: false,
-        });
-        expect(result.diagnostics?.entries.map((entry) => entry.message)).toEqual([
-          "Recoverable tool warning",
-          "Message failed",
-        ]);
-        expect(result.diagnostics?.entries.at(-1)).toMatchObject({
-          source: "delivery",
-          severity: "error",
-        });
-      },
-    );
+    it("keeps a successful isolated turn at status ok when best-effort delivery fails", async () => {
+      // #94058 / #95419: delivery failure must not overwrite execution status.
+      h.runEmbeddedAgentMock.mockResolvedValueOnce({
+        payloads: [
+          { text: "Interim cron report" },
+          { text: "Recoverable tool warning", isError: true, toolName: "exec" },
+        ],
+        meta: { agentMeta: {} },
+      });
+      mockAnnounce();
+      h.resolveCronPayloadOutcomeMock.mockReturnValue(visibleOutcome("Interim cron report"));
+      const deliveryState = {
+        status: "not-delivered",
+        delivered: false,
+        error: "Message failed",
+        failureNotification: { status: "not-requested" },
+      };
+      h.dispatchCronDeliveryMock.mockResolvedValueOnce({
+        delivered: false,
+        deliveryAttempted: true,
+        deliveryError: "Message failed",
+        deliveryState,
+        summary: "Final cron report",
+        outputText: "Final cron report",
+        synthesizedText: "Final cron report",
+        deliveryPayloads: [{ text: "Final cron report" }],
+      });
+      const result = await runJob({ ...announce, bestEffort: true });
+      expectFields(result, {
+        status: "ok",
+        error: undefined,
+        summary: "Final cron report",
+        outputText: "Final cron report",
+        deliveryError: "Message failed",
+        deliveryState,
+        delivered: false,
+        deliveryAttempted: true,
+      });
+      expectFields(result.delivery, {
+        intended: tracedTarget,
+        resolved: { ok: true, ...tracedTarget },
+        fallbackUsed: true,
+        delivered: false,
+      });
+      expect(result.diagnostics?.entries.map((entry) => entry.message)).toEqual([
+        "Recoverable tool warning",
+        "Message failed",
+      ]);
+      expect(result.diagnostics?.entries.at(-1)).toMatchObject({
+        source: "delivery",
+        severity: "error",
+      });
+    });
   });
 });

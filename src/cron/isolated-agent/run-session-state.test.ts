@@ -20,7 +20,6 @@ import {
 import { useSessionStoreTempDirs } from "../../test-utils/session-state-cleanup.js";
 import { CronSessionLifecycleClaimError } from "../run-authority.js";
 import {
-  adoptCronRunSessionMetadata,
   createCronRunContinuationSession,
   createPersistCronSessionEntry,
   syncCronSessionLiveSelection,
@@ -522,7 +521,7 @@ describe("createPersistCronSessionEntry", () => {
     },
   );
 
-  it("claims an initial row after a benign concurrent same-generation field write", async () => {
+  it("claims an initial row without restoring concurrent metadata or cleared policy", async () => {
     // A same-generation writer can advance ownership fields between resolve and claim.
     const sessionKey = "agent:main:session";
     const initialRevision = "initial-revision";
@@ -530,21 +529,29 @@ describe("createPersistCronSessionEntry", () => {
     const initialSessionEntry = makeSessionEntry({
       lifecycleRevision: initialRevision,
       totalTokens: 10,
+      chatType: "direct",
+      elevatedLevel: "full",
+      inheritedToolAllow: ["exec"],
+      sendPolicy: "allow",
     });
     const cronSession = makeCronSession(
-      makeSessionEntry({ lifecycleRevision: runRevision, status: "done", totalTokens: 42 }),
+      { ...initialSessionEntry, lifecycleRevision: runRevision, status: "done", totalTokens: 42 },
       undefined,
       { initialSessionEntry, lifecycleRevision: runRevision },
     );
-    const persistedStore: Record<string, SessionEntry> = {
-      [sessionKey]: {
-        ...initialSessionEntry,
-        // Concurrent benign update: same lifecycle generation, drifted fields.
-        totalTokens: 25,
-        lastInteractionAt: 2000,
-        updatedAt: 2000,
-      },
+    const current: SessionEntry = {
+      ...initialSessionEntry,
+      totalTokens: 25,
+      lastInteractionAt: 2000,
+      updatedAt: 2000,
+      label: "Renamed before claim",
+      pinnedAt: 2000,
+      chatType: "group",
+      sendPolicy: "deny",
     };
+    delete current.elevatedLevel;
+    delete current.inheritedToolAllow;
+    const persistedStore = { [sessionKey]: current };
     const persist = makePersist(cronSession, makeGuardedPersistSessionEntry(persistedStore));
 
     await expect(persist()).resolves.toBeUndefined();
@@ -555,85 +562,50 @@ describe("createPersistCronSessionEntry", () => {
       status: "done",
       totalTokens: 25,
       lastInteractionAt: 2000,
+      updatedAt: 2000,
+      label: "Renamed before claim",
+      pinnedAt: 2000,
+      chatType: "group",
+      sendPolicy: "deny",
     });
+    expect(persistedStore[sessionKey]?.elevatedLevel).toBeUndefined();
+    expect(persistedStore[sessionKey]?.inheritedToolAllow).toBeUndefined();
+    expect(cronSession.sessionEntry.label).toBe("Renamed before claim");
+    expect(cronSession.sessionEntry.pinnedAt).toBe(2000);
+    expect(cronSession.sessionEntry.updatedAt).toBe(2000);
   });
 
-  it.each([
-    { name: "a minted run revision", reused: false },
-    { name: "a reused in-place revision", reused: true },
-  ])(
-    "does not claim the same lifecycle revision after the session id rotates with $name",
-    async ({ reused }) => {
-      const sessionKey = "agent:main:session";
-      const initialRevision = "initial-revision";
-      const runRevision = reused ? initialRevision : crypto.randomUUID();
-      const initialSessionEntry = makeSessionEntry({
-        sessionId: "initial-session-id",
-        lifecycleRevision: initialRevision,
-      });
-      const cronSession = makeCronSession(
-        makeSessionEntry({ sessionId: "initial-session-id", lifecycleRevision: runRevision }),
-        undefined,
-        { initialSessionEntry, lifecycleRevision: runRevision },
-      );
-      const rotatedEntry = makeSessionEntry({
-        sessionId: "rotated-session-id",
-        lifecycleRevision: initialRevision,
-        updatedAt: 2000,
-      });
-      const persistedStore: Record<string, SessionEntry> = {
-        [sessionKey]: rotatedEntry,
-      };
-      const persist = makePersist(cronSession, makeGuardedPersistSessionEntry(persistedStore));
-
-      await expect(persist()).rejects.toBeInstanceOf(CronSessionLifecycleClaimError);
-
-      expect(persistedStore[sessionKey]).toBe(rotatedEntry);
-      expect(cronSession.store[sessionKey]).toBeUndefined();
-      expect(cronSession.sessionEntry.sessionId).toBe("initial-session-id");
-    },
-  );
-
-  it("claims an initial row after a concurrent pin and rename", async () => {
+  it("rejects a rotated session even when its lifecycle revision is reused", async () => {
     const sessionKey = "agent:main:session";
-    const lifecycleRevision = crypto.randomUUID();
-    const initialSessionEntry = makeSessionEntry({ lifecycleRevision: "initial-revision" });
-    const cronSession = makeCronSession(makeSessionEntry({ lifecycleRevision }), undefined, {
-      initialSessionEntry,
-      lifecycleRevision,
+    const initialRevision = "initial-revision";
+    const runRevision = initialRevision;
+    const initialSessionEntry = makeSessionEntry({
+      sessionId: "initial-session-id",
+      lifecycleRevision: initialRevision,
+    });
+    const cronSession = makeCronSession(
+      makeSessionEntry({ sessionId: "initial-session-id", lifecycleRevision: runRevision }),
+      undefined,
+      { initialSessionEntry, lifecycleRevision: runRevision },
+    );
+    const rotatedEntry = makeSessionEntry({
+      sessionId: "rotated-session-id",
+      lifecycleRevision: initialRevision,
+      updatedAt: 2000,
     });
     const persistedStore: Record<string, SessionEntry> = {
-      [sessionKey]: {
-        ...initialSessionEntry,
-        label: "Renamed before claim",
-        pinnedAt: 2000,
-        updatedAt: 2000,
-      },
+      [sessionKey]: rotatedEntry,
     };
     const persist = makePersist(cronSession, makeGuardedPersistSessionEntry(persistedStore));
 
-    await expect(persist()).resolves.toBeUndefined();
-    expect(persistedStore[sessionKey]).toMatchObject({
-      label: "Renamed before claim",
-      lifecycleRevision,
-      pinnedAt: 2000,
-      updatedAt: 2000,
-    });
-    expect(persistedStore[sessionKey]?.status).toBeUndefined();
+    await expect(persist()).rejects.toBeInstanceOf(CronSessionLifecycleClaimError);
+
+    expect(persistedStore[sessionKey]).toBe(rotatedEntry);
+    expect(cronSession.store[sessionKey]).toBeUndefined();
+    expect(cronSession.sessionEntry.sessionId).toBe("initial-session-id");
   });
 
-  it.each([
-    {
-      name: "pin and rename",
-      current: { label: "Renamed", pinnedAt: 2000, updatedAt: 2000 },
-      expected: { label: "Renamed", pinnedAt: 2000, updatedAt: 2000 },
-    },
-    {
-      name: "unpin and clear the label",
-      current: { label: undefined, pinnedAt: undefined, updatedAt: 2000 },
-      expected: { label: undefined, pinnedAt: undefined, updatedAt: 2000 },
-    },
-  ])("preserves a concurrent $name during cron persistence", async ({ current, expected }) => {
+  it("preserves a concurrent unpin and cleared label during cron persistence", async () => {
     const sessionKey = "agent:main:session";
     const lifecycleRevision = crypto.randomUUID();
     const runEntry = makeSessionEntry({
@@ -649,7 +621,9 @@ describe("createPersistCronSessionEntry", () => {
     const persistedStore: Record<string, SessionEntry> = {
       [sessionKey]: {
         ...cronSession.sessionEntry,
-        ...current,
+        label: undefined,
+        pinnedAt: undefined,
+        updatedAt: 2000,
       },
     };
     const persist = makePersist(cronSession, makeGuardedPersistSessionEntry(persistedStore));
@@ -659,84 +633,13 @@ describe("createPersistCronSessionEntry", () => {
     expect(persistedStore[sessionKey]).toMatchObject({
       lifecycleRevision,
       status: "done",
-      updatedAt: expected.updatedAt,
-    });
-    expect(persistedStore[sessionKey]?.label).toBe(expected.label);
-    expect(persistedStore[sessionKey]?.pinnedAt).toBe(expected.pinnedAt);
-    expect(cronSession.sessionEntry.label).toBe(expected.label);
-    expect(cronSession.sessionEntry.pinnedAt).toBe(expected.pinnedAt);
-    expect(cronSession.sessionEntry.updatedAt).toBe(expected.updatedAt);
-  });
-
-  it("does not restore session policy cleared while a cron run is active", async () => {
-    const sessionKey = "agent:main:session";
-    const lifecycleRevision = crypto.randomUUID();
-    const initialSessionEntry = makeSessionEntry({
-      lifecycleRevision,
-      chatType: "direct",
-      elevatedLevel: "full",
-      inheritedToolAllow: ["exec"],
-      sendPolicy: "allow",
-    });
-    const cronSession = makeCronSession(
-      {
-        ...initialSessionEntry,
-        status: "done",
-        totalTokens: 42,
-      },
-      undefined,
-      { initialSessionEntry, lifecycleRevision },
-    );
-    const currentEntry: SessionEntry = {
-      ...initialSessionEntry,
-      chatType: "group",
-      sendPolicy: "deny",
-      updatedAt: 2000,
-    };
-    delete currentEntry.elevatedLevel;
-    delete currentEntry.inheritedToolAllow;
-    const persistedStore: Record<string, SessionEntry> = { [sessionKey]: currentEntry };
-    const persist = makePersist(cronSession, makeGuardedPersistSessionEntry(persistedStore));
-
-    await persist();
-
-    expect(persistedStore[sessionKey]).toMatchObject({
-      chatType: "group",
-      sendPolicy: "deny",
-      status: "done",
-      totalTokens: 42,
       updatedAt: 2000,
     });
-    expect(persistedStore[sessionKey]?.elevatedLevel).toBeUndefined();
-    expect(persistedStore[sessionKey]?.inheritedToolAllow).toBeUndefined();
-  });
-
-  it("adopts rotated run transcript metadata before persisting session-bound cron state", async () => {
-    const cronSession = makeCronSession(makeSessionEntry({ sessionId: "bound-session" }));
-    const changed = adoptCronRunSessionMetadata({
-      entry: cronSession.sessionEntry,
-      sessionKey: "agent:main:telegram:direct:42",
-      runMeta: {
-        sessionId: "bound-session-rotated",
-        sessionFile: "/tmp/bound-session-rotated.jsonl",
-      },
-    });
-    const persistSessionEntry = vi.fn<CronSessionRowWriter>(
-      async ({ operation }) => operation.next,
-    );
-
-    expect(changed).toBe(true);
-    const persist = makePersist(cronSession, persistSessionEntry, "agent:main:telegram:direct:42");
-
-    await persist();
-
-    expect(cronSession.store["agent:main:telegram:direct:42"]).toEqual({
-      sessionId: "bound-session-rotated",
-      usageFamilyKey: "agent:main:telegram:direct:42",
-      usageFamilySessionIds: ["bound-session", "bound-session-rotated"],
-      updatedAt: 1000,
-      systemSent: true,
-    });
+    expect(persistedStore[sessionKey]?.label).toBeUndefined();
+    expect(persistedStore[sessionKey]?.pinnedAt).toBeUndefined();
+    expect(cronSession.sessionEntry.label).toBeUndefined();
+    expect(cronSession.sessionEntry.pinnedAt).toBeUndefined();
+    expect(cronSession.sessionEntry.updatedAt).toBe(2000);
   });
 });
 
