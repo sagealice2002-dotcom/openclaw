@@ -9,6 +9,7 @@ import { resetLogger, setLoggerOverride } from "openclaw/plugin-sdk/runtime-env"
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type {
   CodexControlRequestObservation,
+  CodexControlRequestPhase,
   CodexRequestWaiterSummary,
 } from "./app-server/request-observation.js";
 import {
@@ -523,18 +524,17 @@ it("records each hydration page's control phases and rejects late callbacks afte
       throw new Error("expected the active control observation");
     }
     completedObservations.push(observation);
+    const phaseAfter = (elapsed: number, phase: CodexControlRequestPhase) => {
+      clock += elapsed;
+      observation.phase(phase);
+    };
     if (!previous) {
-      clock += 50;
-      observation.phase("prepare");
+      phaseAfter(50, "prepare");
       for (let attempt = 0; attempt < 2; attempt++) {
-        clock += 25.25;
-        observation.phase("acquire-client");
-        clock += 100;
-        observation.phase("prepare");
-        clock += 25.25;
-        observation.phase("client-request");
-        clock += 300;
-        observation.phase("release-client");
+        phaseAfter(25.25, "acquire-client");
+        phaseAfter(100, "prepare");
+        phaseAfter(25.25, "client-request");
+        phaseAfter(300, "release-client");
         clock += 50;
         if (attempt === 0) {
           observation.phase("prepare");
@@ -545,14 +545,10 @@ it("records each hydration page's control phases and rejects late callbacks afte
       return { data: [thread], nextCursor: "next" };
     }
     expect(observation).not.toBe(previous);
-    clock += 50;
-    observation.phase("prepare");
-    clock += 50;
-    observation.phase("acquire-client");
-    clock += 200;
-    observation.phase("client-request");
-    clock += 600;
-    observation.phase("release-client");
+    phaseAfter(50, "prepare");
+    phaseAfter(50, "acquire-client");
+    phaseAfter(200, "client-request");
+    phaseAfter(600, "release-client");
     clock += 100;
     observation.attemptWaiterFinished?.(
       waiterSummary({
@@ -573,37 +569,35 @@ it("records each hydration page's control phases and rejects late callbacks afte
   await expect(f.control.initialize()).rejects.toThrow(privateText);
   const pages = await emitted(PAGE);
   expect(pages).toHaveLength(2);
-  expect(fields(pages[0])).toMatchObject({
-    outcome: "resolved",
+  const controlPhases = {
     controlRequestCalls: 1,
-    inclusiveControlRequestWaitMs: 1_051,
     controlLoadMs: 50,
-    controlPrepareMs: 101,
     controlAcquireClientMs: 200,
     controlClientRequestMs: 600,
     controlReleaseClientMs: 100,
+    controlWaitersOmitted: 0,
+  };
+  expect(fields(pages[0])).toMatchObject({
+    ...controlPhases,
+    outcome: "resolved",
+    inclusiveControlRequestWaitMs: 1_051,
+    controlPrepareMs: 101,
     postResponseMs: 0,
     provenanceReadCalls: 1,
     provenanceMs: 0,
     controlWaitersV1: resolvedWaiters,
-    controlWaitersOmitted: 0,
   });
   expect(fields(pages[1])).toMatchObject({
+    ...controlPhases,
     outcome: "rejected",
-    controlRequestCalls: 1,
     inclusiveControlRequestWaitMs: 2_000,
-    controlLoadMs: 50,
     controlPrepareMs: 50,
-    controlAcquireClientMs: 200,
-    controlClientRequestMs: 600,
-    controlReleaseClientMs: 100,
     provenanceReadCalls: 0,
     controlFailurePhase: "client-request",
     controlFailureCategory: "rpc-method-unavailable",
     controlWaitersV1: JSON.stringify([
       [1, 1, clientInstanceId, 2, 1, "new", 10, 12, 11, 20, "native-error", "native-error", 19],
     ]),
-    controlWaitersOmitted: 0,
   });
   const completed = JSON.stringify(pages);
   for (const observation of completedObservations) {

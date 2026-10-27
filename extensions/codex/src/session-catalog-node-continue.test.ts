@@ -3,10 +3,10 @@ import { CODEX_CLI_SESSION_SOURCE_CAPABILITY } from "./node-cli-sessions.js";
 import {
   transcriptMirrorMocks,
   nodeHostMocks,
-  CODEX_APP_SERVER_THREADS_LIST_COMMAND,
-  CODEX_APP_SERVER_THREAD_TURNS_LIST_COMMAND,
-  CODEX_CATALOG_TRANSCRIPT_READ_COMMAND,
-  CODEX_NODE_CONTINUE_COMMANDS,
+  CODEX_APP_SERVER_THREADS_LIST_COMMAND as THREAD_LIST,
+  CODEX_APP_SERVER_THREAD_TURNS_LIST_COMMAND as TURN_LIST,
+  CODEX_CATALOG_TRANSCRIPT_READ_COMMAND as TRANSCRIPT_READ,
+  CODEX_NODE_CONTINUE_COMMANDS as CONTINUE_COMMANDS,
   tempDirs,
   readCodexSessionTranscript,
   registerCodexSessionCatalog,
@@ -27,10 +27,10 @@ import {
   resolveDefaultAgentDir,
   resolveSessionAgentIdsStrict,
   createCodexTestBindingStore,
-  CODEX_TERMINAL_RESUME_COMMAND,
-  CODEX_TERMINAL_START_COMMAND,
+  CODEX_TERMINAL_RESUME_COMMAND as TERMINAL_RESUME,
+  CODEX_TERMINAL_START_COMMAND as TERMINAL_START,
   createCodexSessionCatalogNodeHostCommands,
-  CODEX_LOCAL_SESSION_HOST_ID,
+  CODEX_LOCAL_SESSION_HOST_ID as LOCAL_HOST,
   createCodexSessionCatalogNodeInvokePolicies,
   type OpenClawConfig,
   type PluginRuntime,
@@ -48,7 +48,7 @@ const nodeSession = (threadId: string, fields: Record<string, unknown> = {}) => 
   archived: false,
   ...fields,
 });
-const pairedNode = (commands: string[] = [...CODEX_NODE_CONTINUE_COMMANDS]) => ({
+const pairedNode = (commands: string[] = [...CONTINUE_COMMANDS]) => ({
   nodeId: "devbox",
   connected: true,
   caps: [CODEX_CLI_SESSION_SOURCE_CAPABILITY],
@@ -83,8 +83,8 @@ function nodeRuntime(
   checkParams: (params: unknown) => void = () => {},
 ) {
   const replies: Record<string, { payloadJSON: string }> = {
-    [CODEX_APP_SERVER_THREADS_LIST_COMMAND]: nodePage(sessions),
-    [CODEX_APP_SERVER_THREAD_TURNS_LIST_COMMAND]: payload({ data: turns }),
+    [THREAD_LIST]: nodePage(sessions),
+    [TURN_LIST]: payload({ data: turns }),
   };
   return createRuntime({
     nodes: [pairedNode()],
@@ -224,7 +224,7 @@ it("keeps Gateway-first upgrades compatible with the released node selector and 
     }).sessionAgentId;
   const { runtime, createSessionEntry } = nodeRuntime(
     {
-      nodes: [pairedNode([...CODEX_NODE_CONTINUE_COMMANDS, CODEX_TERMINAL_RESUME_COMMAND])],
+      nodes: [pairedNode([...CONTINUE_COMMANDS, TERMINAL_RESUME])],
     },
     [nodeSession(threadId)],
     [],
@@ -275,12 +275,7 @@ it.each([
     {},
     "paired node does not permit Codex session continuation",
     {
-      nodes: [
-        pairedNode([
-          CODEX_APP_SERVER_THREADS_LIST_COMMAND,
-          CODEX_APP_SERVER_THREAD_TURNS_LIST_COMMAND,
-        ]),
-      ],
+      nodes: [pairedNode([THREAD_LIST, TURN_LIST])],
     },
   ],
   ["non-canonical host", { hostId: "node:devbox " }, "hostId is invalid", {}],
@@ -352,14 +347,14 @@ it("builds local and paired-node terminal plans from verified catalog records", 
             ],
     }),
   );
-  const commands = [CODEX_APP_SERVER_THREADS_LIST_COMMAND, CODEX_TERMINAL_RESUME_COMMAND];
+  const commands = [THREAD_LIST, TERMINAL_RESUME];
   const authorizedCommands = new Set(
     createCodexSessionCatalogNodeInvokePolicies().flatMap((policy) => policy.commands),
   );
-  expect(authorizedCommands).toContain(CODEX_TERMINAL_RESUME_COMMAND);
+  expect(authorizedCommands).toContain(TERMINAL_RESUME);
   const policy = createCodexSessionCatalogNodeInvokePolicies()[0]!;
   const invokeNode = vi.fn(async () => ({ ok: true as const, payload: "listed" }));
-  expect(policy.handle({ command: CODEX_TERMINAL_RESUME_COMMAND, invokeNode } as never)).toEqual({
+  expect(policy.handle({ command: TERMINAL_RESUME, invokeNode } as never)).toEqual({
     ok: true,
   });
   for (const [terminal, admin, allowed] of [
@@ -370,7 +365,7 @@ it("builds local and paired-node terminal plans from verified catalog records", 
   ] as const) {
     expect(
       await policy.handle({
-        command: CODEX_TERMINAL_START_COMMAND,
+        command: TERMINAL_START,
         nodeId: "node",
         params: {},
         invokeNode,
@@ -410,19 +405,15 @@ it("builds local and paired-node terminal plans from verified catalog records", 
         expect.objectContaining({
           threadId,
           canOpenTerminal,
-          ...(hostId === CODEX_LOCAL_SESSION_HOST_ID ? { name: "Readable fallback" } : {}),
+          ...(hostId === LOCAL_HOST ? { name: "Readable fallback" } : {}),
         }),
       ],
     });
   const expectTerminalAvailability = (local: boolean) =>
     expect(getProvider()?.list({})).resolves.toEqual(
-      expect.arrayContaining([
-        terminalHost(CODEX_LOCAL_SESSION_HOST_ID, local),
-        terminalHost("node:devbox", true),
-      ]),
+      expect.arrayContaining([terminalHost(LOCAL_HOST, local), terminalHost("node:devbox", true)]),
     );
-  const openTerminal = (hostId = CODEX_LOCAL_SESSION_HOST_ID) =>
-    getProvider()?.openTerminal?.({ hostId, threadId });
+  const openTerminal = (hostId = LOCAL_HOST) => getProvider()?.openTerminal?.({ hostId, threadId });
   const startTerminal = (cwd: string, initialMessage?: string, nodeId?: string) =>
     getProvider()?.startTerminalSession?.({ agentId: "main", cwd, initialMessage, nodeId });
 
@@ -434,7 +425,7 @@ it("builds local and paired-node terminal plans from verified catalog records", 
   await expect(startTerminal("/workspace/node-new", undefined, "devbox")).resolves.toEqual({
     kind: "node",
     nodeId: "devbox",
-    command: CODEX_TERMINAL_START_COMMAND,
+    command: TERMINAL_START,
     uploadPathStyle: "native",
     paramsJSON: JSON.stringify({ cwd: "/workspace/node-new" }),
     cwd: "/workspace/node-new",
@@ -467,7 +458,7 @@ it("builds local and paired-node terminal plans from verified catalog records", 
     });
   }
   const fresh = createCodexSessionCatalogNodeHostCommands(control).find(
-    (command) => command.command === CODEX_TERMINAL_START_COMMAND,
+    (command) => command.command === TERMINAL_START,
   )!;
   process.env.PATH = binDir;
   const io = { signal: new AbortController().signal, emitChunk: vi.fn(), onInput: vi.fn() };
@@ -494,13 +485,13 @@ it("builds local and paired-node terminal plans from verified catalog records", 
   const terminalNode = (
     nodeId: string,
     connected = true,
-    invocableCommands: string[] = [CODEX_TERMINAL_START_COMMAND],
+    invocableCommands: string[] = [TERMINAL_START],
   ) => ({ nodeId, connected, invocableCommands });
   const hosts = [
     terminalNode("ready"),
-    terminalNode("resume-only", true, [CODEX_TERMINAL_RESUME_COMMAND]),
+    terminalNode("resume-only", true, [TERMINAL_RESUME]),
     terminalNode("offline", false),
-    { ...terminalNode("denied", true, []), commands: [CODEX_TERMINAL_START_COMMAND] },
+    { ...terminalNode("denied", true, []), commands: [TERMINAL_START] },
   ];
   const localList = vi.spyOn(control, "listPage").mockRejectedValue(new Error("app-server down"));
   invoke.mockClear();
@@ -517,7 +508,7 @@ it("builds local and paired-node terminal plans from verified catalog records", 
   expect(onHost.mock.calls.map(([host]) => host)).toEqual(expect.arrayContaining(catalogHosts!));
   expect(invoke).not.toHaveBeenCalled();
   expect(terminalHosts?.filter((host) => host.kind === "gateway")).toEqual([
-    expect.objectContaining({ hostId: CODEX_LOCAL_SESSION_HOST_ID, connected: false }),
+    expect.objectContaining({ hostId: LOCAL_HOST, connected: false }),
   ]);
   localList.mockRestore();
   const userSource = catalogHosts?.find((host) => host.label === "Local Codex · user");
@@ -537,12 +528,12 @@ it("builds local and paired-node terminal plans from verified catalog records", 
   await expect(openTerminal("node:devbox")).resolves.toMatchObject({
     kind: "node",
     nodeId: "devbox",
-    command: CODEX_TERMINAL_RESUME_COMMAND,
+    command: TERMINAL_RESUME,
     uploadPathStyle: "native",
     cwd: "/workspace/node",
   });
 
-  node.invocableCommands = [CODEX_APP_SERVER_THREADS_LIST_COMMAND];
+  node.invocableCommands = [THREAD_LIST];
   await expect(getProvider()?.list({ hostIds: ["node:devbox"] })).resolves.toMatchObject([
     { sessions: [{ threadId, canOpenTerminal: false }] },
   ]);
@@ -552,8 +543,8 @@ it("builds local and paired-node terminal plans from verified catalog records", 
 });
 
 it.each([
-  { mode: "bounded", command: CODEX_CATALOG_TRANSCRIPT_READ_COMMAND, nativeLimit: 25 },
-  { mode: "legacy", command: CODEX_APP_SERVER_THREAD_TURNS_LIST_COMMAND, nativeLimit: 1 },
+  { mode: "bounded", command: TRANSCRIPT_READ, nativeLimit: 25 },
+  { mode: "legacy", command: TURN_LIST, nativeLimit: 1 },
 ])("reads a paired-node transcript through its $mode command", async ({ command, nativeLimit }) => {
   const source = catalogThreadItem("item-remote", {
     type: "userMessage",
@@ -570,7 +561,7 @@ it.each([
       throw new Error("unexpected node command");
     }
     return payload({
-      ...(command === CODEX_CATALOG_TRANSCRIPT_READ_COMMAND
+      ...(command === TRANSCRIPT_READ
         ? { items: [projected] }
         : { data: [{ id: "turn-remote", items: [source] }] }),
       nextCursor: "remote-position-2",
@@ -581,11 +572,7 @@ it.each([
       {
         nodeId: "devbox",
         connected: true,
-        commands: [
-          CODEX_APP_SERVER_THREADS_LIST_COMMAND,
-          CODEX_APP_SERVER_THREAD_TURNS_LIST_COMMAND,
-          command,
-        ],
+        commands: [THREAD_LIST, TURN_LIST, command],
         displayName: "Devbox",
       },
     ],
