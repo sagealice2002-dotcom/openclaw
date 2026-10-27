@@ -9,6 +9,7 @@ import { readRuntimePromptImageFactIndexes } from "../../../media/runtime-prompt
 import { buildPersistedUserTurnMessage } from "../../../sessions/user-turn-transcript.js";
 import { withEnvAsync } from "../../../test-utils/env.js";
 import type { AgentMessage } from "../../runtime/index.js";
+import { convertToLlm } from "../../sessions/messages.js";
 import { suppressedInlineImageFacts } from "./image-media-facts.test-support.js";
 import {
   buildPromptImageFailureNotice,
@@ -76,7 +77,7 @@ describe("structured prompt media replay", () => {
     });
     const firstRequest = await materializeProviderContext({
       ...sessionOptions,
-      context: { messages: first },
+      context: { messages: convertToLlm(first) },
     });
     await writeImage(workspaceDir, "late.png");
     for (const scope of [
@@ -95,7 +96,7 @@ describe("structured prompt media replay", () => {
     );
     const secondRequest = await materializeProviderContext({
       ...sessionOptions,
-      context: { messages: replay },
+      context: { messages: convertToLlm(replay) },
     });
     expect(secondRequest.messages[0]).toEqual(firstRequest.messages[0]);
     expect(secondRequest.messages[0]?.content).toEqual([
