@@ -31,7 +31,6 @@ import { ChatPaneDiscussion } from "./chat-pane-discussion.ts";
 import { sidebarPanelDefinitions } from "./chat-pane-embedded-panels.ts";
 import { readChatPaneHeaderAccess } from "./chat-pane-header-access.ts";
 import {
-  resolveChatPaneParentSession,
   resolveChatPaneWorkspaceIcon,
   resolveChatPaneWorkspace,
 } from "./chat-pane-header-identity.ts";
@@ -415,7 +414,6 @@ export abstract class ChatPaneHeader extends ChatPaneDiscussion {
       [this.headerBoardMenu?.widget, this.headerBoardMenu?.tabs, this.headerBoardMenu?.canMutate],
       () => this.headerBoardMenu && { ...this.headerBoardMenu, onSelect: this.onHeaderBoardSelect },
     );
-    const parentSession = this.observedParentSessionRow();
     const onBranchSelect = (leafEntryId: string) => {
       const access = readChatSessionActionAccess(
         this.context.gateway.snapshot,
@@ -508,7 +506,7 @@ export abstract class ChatPaneHeader extends ChatPaneDiscussion {
         token: this.context.gateway.connection.token,
         password: this.context.gateway.connection.password,
       }),
-      parentSession: resolveChatPaneParentSession(row, parentSession ? [parentSession] : []),
+      parentSession: this.displayedParentSession(row),
       branch,
       branches: this.state ? displayedChatSessionBranches(this.state) : [],
       branchSwitchDisabledReason: headerAccess.branchSwitchDisabledReason,

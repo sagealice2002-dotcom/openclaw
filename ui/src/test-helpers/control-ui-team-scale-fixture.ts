@@ -71,6 +71,7 @@ type FixtureOptions = {
   largeSnapshot?: boolean;
   rowFacts?: boolean;
   offRosterSession?: boolean;
+  archivedSession?: boolean;
   transcriptMessages?: number;
   dashboardMcpApp?: { font: Buffer };
   /** Opt into a scripted HTML dashboard with an independently fetched web font. */
@@ -124,6 +125,7 @@ export function createControlUiTeamScaleFixture(options: FixtureOptions = {}) {
       people,
       counts,
       offRosterSession: options.offRosterSession,
+      archivedSession: options.archivedSession,
       sidebarPersistentChildren: options.sidebarPersistentChildren,
     });
   const duplicateReads = options.duplicateBootReads
@@ -132,8 +134,6 @@ export function createControlUiTeamScaleFixture(options: FixtureOptions = {}) {
   const sidebarPresentation = options.sidebarPresentation
     ? createTeamScaleSidebarPresentation({ agents, pinnedRows, assets, now })
     : undefined;
-  pinnedRows[0]!.sharingRole = "admin";
-  pinnedRows[0]!.visibility = "shared";
   if (duplicateReads) {
     assets.set(duplicateReads.mediaPath, duplicateReads.asset);
     pinnedRows[0]!.worktree = duplicateReads.worktree;
