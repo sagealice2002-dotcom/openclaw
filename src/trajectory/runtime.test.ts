@@ -328,68 +328,36 @@ describe("trajectory runtime", () => {
     },
   );
 
-  it("rejects a legacy SQLite marker for another session", async () => {
-    const storePath = path.join(tempDirs.make("openclaw-trajectory-runtime-"), "sessions.json");
-
-    expect(
-      await createTrajectoryRuntimeRecorder({
-        sessionId: "current-session",
-        sessionFile: formatSqliteSessionFileMarker({
-          agentId: "main",
-          sessionId: "stale-session",
-          storePath,
-        }),
-      }),
-    ).toBeNull();
-  });
-
-  it.each([
-    ["requested key", "agent:main:other", "main", "agent:main:main"],
-    ["target key agent", undefined, "main", "agent:worker:main"],
-  ])(
-    "rejects a complete target that conflicts with the %s",
-    async (_label, sessionKey, agentId, targetKey) => {
+  it.each(["marker", "requested key", "target agent", "stored session"] as const)(
+    "rejects a conflicting %s",
+    async (conflict) => {
       const storePath = path.join(tempDirs.make("openclaw-trajectory-runtime-"), "sessions.json");
-
+      const target = {
+        agentId: "main",
+        sessionId: "session-1",
+        sessionKey: "agent:main:main",
+        storePath,
+      };
+      if (conflict === "stored session") {
+        await replaceSessionEntry(target, { sessionId: "other-session", updatedAt: 1 });
+      }
+      const input =
+        conflict === "marker"
+          ? {
+              sessionFile: formatSqliteSessionFileMarker({ ...target, sessionId: "other-session" }),
+            }
+          : {
+              sessionKey: conflict === "requested key" ? "agent:main:other" : undefined,
+              sessionTarget: {
+                ...target,
+                sessionKey: conflict === "target agent" ? "agent:worker:main" : target.sessionKey,
+              },
+            };
       expect(
-        await createTrajectoryRuntimeRecorder({
-          sessionId: "session-1",
-          ...(sessionKey ? { sessionKey } : {}),
-          sessionTarget: {
-            agentId,
-            sessionId: "session-1",
-            sessionKey: targetKey,
-            storePath,
-          },
-        }),
+        await createTrajectoryRuntimeRecorder({ sessionId: target.sessionId, ...input }),
       ).toBeNull();
     },
   );
-
-  it("rejects a complete target whose key maps to another session", async () => {
-    const storePath = path.join(tempDirs.make("openclaw-trajectory-runtime-"), "sessions.json");
-    const sessionKey = "agent:main:stored-session";
-    await replaceSessionEntry(
-      { agentId: "main", sessionKey, storePath },
-      {
-        sessionId: "stored-session",
-        updatedAt: 1,
-      },
-    );
-
-    expect(
-      await createTrajectoryRuntimeRecorder({
-        sessionId: "requested-session",
-        sessionKey,
-        sessionTarget: {
-          agentId: "main",
-          sessionId: "requested-session",
-          sessionKey,
-          storePath,
-        },
-      }),
-    ).toBeNull();
-  });
 
   it("stores bounded oversized runtime events in SQLite", async () => {
     const { recorder: runtimeRecorder, storePath } = await createMarkerRecorder();
@@ -611,10 +579,7 @@ describe("trajectory runtime", () => {
     const oversizedUsage = Object.fromEntries(
       Array.from({ length: 64 }, (_value, index) => [`field-${index}`, "x".repeat(5_000)]),
     );
-    const promptCache = { readTokens: 333_824, writeTokens: 51_130 };
-    const recorder = await createCapturedRuntimeRecorder();
-
-    recorder.recordEvent("model.completed", {
+    const outcome = {
       threadId: "thread-compact",
       turnId: "turn-compact",
       timedOut: true,
@@ -622,9 +587,13 @@ describe("trajectory runtime", () => {
       aborted: true,
       promptError: "terminal prompt error",
       prompt: "summarize the incident timeline",
-      usage: oversizedUsage,
-      promptCache,
+      promptCache: { readTokens: 333_824, writeTokens: 51_130 },
       stopReason: "length",
+    };
+    const recorder = await createCapturedRuntimeRecorder();
+    recorder.recordEvent("model.completed", {
+      ...outcome,
+      usage: oversizedUsage,
       assistantTexts: Array.from(
         { length: 12 },
         (_value, index) => `assistant-${index} ${"x".repeat(32_000)}`,
@@ -637,15 +606,7 @@ describe("trajectory runtime", () => {
     expect(parsed.data).toMatchObject({
       truncated: true,
       reason: "trajectory-event-size-limit",
-      threadId: "thread-compact",
-      turnId: "turn-compact",
-      timedOut: true,
-      yieldDetected: false,
-      aborted: true,
-      promptError: "terminal prompt error",
-      prompt: "summarize the incident timeline",
-      promptCache,
-      stopReason: "length",
+      ...outcome,
     });
     expect(parsed.data.usage).toBeUndefined();
     expect(parsed.data.assistantTexts).toBeUndefined();

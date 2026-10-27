@@ -100,19 +100,15 @@ async function addHistory(
 }
 
 function appendManaged(event: TrajectoryEvent, discardPrevious = false) {
+  const options = { agentId: "main", path: sqlitePath() };
   appendSqliteTrajectoryRuntimeEventsWithWriter(
     {
       sessionId: event.sessionId,
       discardPrevious,
       events: [{ runId: event.runId, ts: event.ts, line: JSON.stringify(event) }],
     },
-    openOpenClawAgentDatabase({ agentId: "main", path: sqlitePath() }),
-    (operationLabel, write) =>
-      runOpenClawAgentWriteTransaction(
-        write,
-        { agentId: "main", path: sqlitePath() },
-        { operationLabel },
-      ),
+    openOpenClawAgentDatabase(options),
+    (operationLabel, write) => runOpenClawAgentWriteTransaction(write, options, { operationLabel }),
   );
 }
 
@@ -375,73 +371,10 @@ it.each(
     const evictedBytes = (bytesBefore.get("oldest") ?? 0) + (bytesBefore.get("middle") ?? 0);
     const maxGlobalRuntimeBytes = totalBytes + triggerBytes - evictedBytes + delta;
 
-    const database = openOpenClawAgentDatabase({ agentId: "main", path: sqlitePath() });
-    using _ = { [Symbol.dispose]: retainAgentDatabase(database.db) };
-    const native = requireNativeSqliteDatabase(database.db);
-    clearNodeSqliteKyselyCacheForDatabase(native);
-    const prepare = native.prepare.bind(native);
-    let aggregates = 0;
-    let writing = false;
-    const nativeExec = database.db.exec.bind(database.db);
-    const transactionSpy = vi.spyOn(database.db, "exec").mockImplementation((sql) => {
-      nativeExec(sql);
-      if (sql.startsWith("BEGIN")) {
-        writing = sql === "BEGIN IMMEDIATE";
-      } else if (sql === "COMMIT" || sql === "ROLLBACK") {
-        writing = false;
-      }
-    });
-    const prepareSpy = vi.spyOn(native, "prepare").mockImplementation((sql) => {
-      const statement = prepare(sql);
-      if (
-        sql.includes('"trajectory_runtime_events"') &&
-        sql.includes("sum(") &&
-        !/where/i.test(sql)
-      ) {
-        const all = statement.all.bind(statement);
-        const get = statement.get.bind(statement);
-        const iterate = statement.iterate.bind(statement);
-        const assertAggregatePlan = <T>(rows: T, args: Parameters<typeof statement.all>) => {
-          aggregates += 1;
-          expect(writing, "global aggregation must not hold the writer lock").toBe(false);
-          const plan = prepare(`EXPLAIN QUERY PLAN ${sql}`).all(...args);
-          const details = plan.map((row) => row.detail);
-          expect(
-            details.filter(
-              (detail) =>
-                typeof detail === "string" &&
-                /(?:SCAN|SEARCH) trajectory_runtime_events\b/.test(detail),
-            ),
-          ).toEqual([
-            expect.stringMatching(
-              /SCAN trajectory_runtime_events USING COVERING INDEX idx_agent_trajectory_runtime_run/,
-            ),
-          ]);
-          expect(details).not.toContainEqual(expect.stringMatching(/USE TEMP B-TREE FOR GROUP BY/));
-          return rows;
-        };
-        vi.spyOn(statement, "all").mockImplementation((...args) =>
-          assertAggregatePlan(all(...args), args),
-        );
-        vi.spyOn(statement, "get").mockImplementation((...args) =>
-          assertAggregatePlan(get(...args), args),
-        );
-        vi.spyOn(statement, "iterate").mockImplementation(function* (...args) {
-          yield* assertAggregatePlan([...iterate(...args)], args);
-          return undefined;
-        });
-      }
-      return statement;
-    });
-    try {
+    withGlobalSelection(() => {
       vi.advanceTimersByTime(60 * 60 * 1_000);
       append("session-1", [trigger], maxGlobalRuntimeBytes);
-      expect(aggregates).toBeGreaterThan(0);
-    } finally {
-      clearNodeSqliteKyselyCacheForDatabase(native);
-      prepareSpy.mockRestore();
-      transactionSpy.mockRestore();
-    }
+    });
 
     await expectTypes({
       oldest: [],
@@ -561,9 +494,7 @@ it("retains the same newest runs when eviction spans several selection pages", a
 });
 
 it("rate-limits the global sweep instead of running it on every insert", async () => {
-  vi.useFakeTimers();
-  vi.setSystemTime(now);
-  append("session-1", [createTrajectoryEvent({ type: "current" })]);
+  startCurrent();
   await addSession("old-session");
   const database = openOpenClawAgentDatabase({ agentId: "main", path: sqlitePath() });
   const scopes = [sqliteSessionIdWriteScope("session-1"), sqliteSessionIdWriteScope("old-session")];
@@ -603,48 +534,90 @@ function withCompetingSelectionWrite(
   maxWrites = 1,
   managed = false,
 ) {
-  const database = openOpenClawAgentDatabase({ agentId: "main", path: sqlitePath() });
   const competing = openNodeSqliteDatabase(sqlitePath());
   competing.exec("PRAGMA busy_timeout = 0");
+  let writes = 0;
+  try {
+    withGlobalSelection(runAppend, (native) => {
+      if (writes < maxWrites) {
+        writes++;
+        mutate(managed ? native : competing);
+      }
+    });
+  } finally {
+    competing.close();
+  }
+}
+
+function withGlobalSelection(run: () => void, afterSelection?: (native: DatabaseSync) => void) {
+  const database = openOpenClawAgentDatabase({ agentId: "main", path: sqlitePath() });
+  using _ = { [Symbol.dispose]: retainAgentDatabase(database.db) };
   const native = requireNativeSqliteDatabase(database.db);
   clearNodeSqliteKyselyCacheForDatabase(native);
   const prepare = native.prepare.bind(native);
-  let writes = 0;
-  const spy = vi.spyOn(native, "prepare").mockImplementation((query) => {
-    const statement = prepare(query);
+  let selections = 0;
+  let writing = false;
+  const exec = database.db.exec.bind(database.db);
+  const transactionSpy = vi.spyOn(database.db, "exec").mockImplementation((sql) => {
+    exec(sql);
+    if (sql.startsWith("BEGIN")) {
+      writing = sql === "BEGIN IMMEDIATE";
+    } else if (sql === "COMMIT" || sql === "ROLLBACK") {
+      writing = false;
+    }
+  });
+  const spy = vi.spyOn(native, "prepare").mockImplementation((sql) => {
+    const statement = prepare(sql);
     if (
-      query.includes('"trajectory_runtime_events"') &&
-      /group by/i.test(query) &&
-      !/where/i.test(query)
+      sql.includes('"trajectory_runtime_events"') &&
+      (afterSelection ? /group by/i.test(sql) : sql.includes("sum(")) &&
+      !/where/i.test(sql)
     ) {
-      const afterSelection = () => {
-        if (writes < maxWrites) {
-          writes++;
-          mutate(managed ? native : competing);
+      const selected = (args: Parameters<typeof statement.all>) => {
+        selections++;
+        if (afterSelection) {
+          afterSelection(native);
+        } else {
+          expect(writing, "global aggregation must not hold the writer lock").toBe(false);
+          const details = prepare(`EXPLAIN QUERY PLAN ${sql}`)
+            .all(...args)
+            .map((row) => row.detail);
+          expect(
+            details.filter(
+              (detail) =>
+                typeof detail === "string" &&
+                /(?:SCAN|SEARCH) trajectory_runtime_events\b/.test(detail),
+            ),
+          ).toEqual([
+            expect.stringMatching(
+              /SCAN trajectory_runtime_events USING COVERING INDEX idx_agent_trajectory_runtime_run/,
+            ),
+          ]);
+          expect(details).not.toContainEqual(expect.stringMatching(/USE TEMP B-TREE FOR GROUP BY/));
         }
       };
       const all = statement.all.bind(statement);
       const iterate = statement.iterate.bind(statement);
       vi.spyOn(statement, "all").mockImplementation((...args) => {
         const rows = all(...args);
-        afterSelection();
+        selected(args);
         return rows;
       });
       vi.spyOn(statement, "iterate").mockImplementation(function* (...args) {
         yield* iterate(...args);
-        afterSelection();
+        selected(args);
         return undefined;
       });
     }
     return statement;
   });
   try {
-    runAppend();
-    expect(writes).toBeGreaterThan(0);
+    run();
+    expect(selections).toBeGreaterThan(0);
   } finally {
     clearNodeSqliteKyselyCacheForDatabase(native);
     spy.mockRestore();
-    competing.close();
+    transactionSpy.mockRestore();
   }
 }
 
