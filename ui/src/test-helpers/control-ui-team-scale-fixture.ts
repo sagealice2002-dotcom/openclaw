@@ -75,10 +75,10 @@ type FixtureOptions = {
 };
 
 /** One deterministic inventory shared by browser benchmarks and focused UI proofs. */
-export function createControlUiTeamScaleFixture(options: FixtureOptions = {}) {
-  if (options.lateRowFacts) {
-    options = { ...options, rowFacts: true, transcriptAvatars: true };
-  }
+export function createControlUiTeamScaleFixture(input: FixtureOptions = {}) {
+  const options = input.lateRowFacts
+    ? { ...input, rowFacts: true, transcriptAvatars: true }
+    : input;
   const counts = {
     ...TEAM_SCALE_COUNTS,
     transcriptMessages:

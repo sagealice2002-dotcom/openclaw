@@ -13,7 +13,7 @@ import {
 } from "../../lib/protocol-validators.generated/transcript.js";
 import * as json from "../../lib/snapshot-json.ts";
 import { projectChatMessageReactions } from "./chat-message-reactions-snapshot.ts";
-import { type ChatSessionSnapshot } from "./session-message-cache.ts";
+import type { ChatSessionSnapshot } from "./session-message-cache.ts";
 import {
   boundChatThumbnails,
   chatThumbnailWeight,
