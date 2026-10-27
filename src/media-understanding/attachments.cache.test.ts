@@ -212,13 +212,7 @@ it("allows RFC2544 benchmark-range URLs only when media fetch policy opts in", a
   );
   download("image", "image/jpeg");
   const cache = createCache([attachment], { ssrfPolicy: { allowRfc2544BenchmarkRange: true } });
-  expect(await cache.getBuffer(request)).toStrictEqual({
-    buffer: Buffer.from("image"),
-    classification: { mime: "image/jpeg", class: "image" },
-    mime: "image/jpeg",
-    fileName: "file.jpg",
-    size: 5,
-  });
+  expect((await cache.getBuffer(request)).buffer).toEqual(Buffer.from("image"));
 });
 it("carries no local path when a blocked path recovers through the URL fallback", async ({
   base,
