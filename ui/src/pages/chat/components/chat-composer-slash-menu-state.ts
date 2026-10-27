@@ -40,14 +40,6 @@ export function getSlashArgOptionId(paneId: string, commandName: string, arg: st
   );
 }
 
-function getSlashCommandOptionLabel(cmd: SlashCommandDef | undefined): string {
-  if (!cmd) {
-    return "";
-  }
-  const command = `/${cmd.name}${cmd.args ? ` ${cmd.args}` : ""}`;
-  return `${command} ${getSlashCommandDescription(cmd)}`;
-}
-
 export type SlashMenuState = {
   slashMenuOpen: boolean;
   slashMenuItems: SlashCommandDef[];
@@ -98,7 +90,12 @@ export function getActiveSlashMenuOptionLabel(state: SlashMenuState): string {
     const arg = state.slashMenuArgItems[state.slashMenuIndex];
     return commandName && arg ? `/${commandName} ${arg}` : "";
   }
-  return getSlashCommandOptionLabel(state.slashMenuItems[state.slashMenuIndex]);
+  const cmd = state.slashMenuItems[state.slashMenuIndex];
+  if (!cmd) {
+    return "";
+  }
+  const command = `/${cmd.name}${cmd.args ? ` ${cmd.args}` : ""}`;
+  return `${command} ${getSlashCommandDescription(cmd)}`;
 }
 
 export function createSlashMenu() {
@@ -261,36 +258,6 @@ export function createSlashMenu() {
     state.slashMenuArgItems = [];
   }
 
-  function beginInlineSlashArguments(
-    cmd: SlashCommandDef,
-    state: SlashMenuState,
-    host: SlashMenuHost,
-  ): boolean {
-    if (
-      !state.slashMenuCompletion?.inline ||
-      cmd.source === "skill" ||
-      !cmd.args ||
-      !host.canRun(true, cmd) ||
-      !host.runInlineCommand
-    ) {
-      return false;
-    }
-    state.slashMenuCommand = cmd;
-    state.slashMenuIndex = 0;
-    state.slashMenuItems = [];
-    const argOptions = host.resolveArgOptions(cmd);
-    if (argOptions.length > 0) {
-      state.slashMenuMode = "args";
-      state.slashMenuArgItems = argOptions;
-      state.slashMenuOpen = true;
-      return true;
-    }
-    state.slashMenuMode = "freeform-args";
-    state.slashMenuArgItems = [];
-    state.slashMenuOpen = false;
-    return beginInlineFreeformSlashArguments(cmd.name, state, host);
-  }
-
   function selectSlashCommand(
     cmd: SlashCommandDef,
     state: SlashMenuState,
@@ -310,8 +277,29 @@ export function createSlashMenu() {
       return;
     }
     const inlineReplacement = cmd.source === "skill" ? `$${cmd.name}` : `/${cmd.name}`;
-    if (beginInlineSlashArguments(cmd, state, host)) {
-      return;
+    if (
+      state.slashMenuCompletion?.inline &&
+      cmd.source !== "skill" &&
+      cmd.args &&
+      host.canRun(true, cmd) &&
+      host.runInlineCommand
+    ) {
+      state.slashMenuCommand = cmd;
+      state.slashMenuIndex = 0;
+      state.slashMenuItems = [];
+      const argOptions = host.resolveArgOptions(cmd);
+      if (argOptions.length > 0) {
+        state.slashMenuMode = "args";
+        state.slashMenuArgItems = argOptions;
+        state.slashMenuOpen = true;
+        return;
+      }
+      state.slashMenuMode = "freeform-args";
+      state.slashMenuArgItems = [];
+      state.slashMenuOpen = false;
+      if (beginInlineFreeformSlashArguments(cmd.name, state, host)) {
+        return;
+      }
     }
     if (
       !completeOnly &&
