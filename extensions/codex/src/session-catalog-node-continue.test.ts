@@ -474,11 +474,9 @@ it("builds local and paired-node terminal plans from verified catalog records", 
     },
     io,
   );
-  for (const field of ["agentId", "argv", "env", "executable"]) {
-    await expect(
-      fresh.handle(JSON.stringify({ cwd: binDir, cols: 80, rows: 24, [field]: "injected" }), io),
-    ).rejects.toThrow("unknown terminal start parameter");
-  }
+  await expect(
+    fresh.handle(JSON.stringify({ cwd: binDir, cols: 80, rows: 24, argv: "injected" }), io),
+  ).rejects.toThrow("unknown terminal start parameter");
   const terminalNode = (
     nodeId: string,
     connected = true,

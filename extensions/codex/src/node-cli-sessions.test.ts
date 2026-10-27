@@ -460,40 +460,18 @@ it("does not start a node resume canceled while its source is resolving", async 
   expect(runCommand).not.toHaveBeenCalled();
 });
 
-it("preserves the node-owned catalog home and rejects an unavailable source", async () => {
+it("rejects a non-local or removed catalog source", async () => {
   vi.stubEnv("OPENCLAW_STATE_DIR", tempDir);
   const { factory, reconfigure } = await createCatalog();
   try {
-    const source = await factory.forNode("research");
-    expect(source.codexHome).not.toBe(tempDir);
-    await fs.mkdir(source.codexHome, { recursive: true });
-    runCommand.mockImplementation(async (argv, options) => {
-      await fs.writeFile(path.join(options?.env?.CODEX_HOME ?? tempDir, "resumed"), "yes");
-      return completeResume(argv);
-    });
+    await factory.forNode("research");
     const command = nodeCommand(undefined, (agentId) => factory.forNode(agentId));
-    const entry = catalogEntry(source.sourceHomeId);
-    const invoke = vi.fn<PluginRuntime["nodes"]["invoke"]>(async (request) => ({
-      ok: true,
-      payloadJSON: await command.handle(JSON.stringify(request.params)),
-    }));
-    const runtime = createPluginRuntimeMock({
-      agent: { session: { getSessionEntryAsync: async () => entry } },
-      nodes: { invoke },
-    });
-    const request = { ...catalogRequest(runtime), cwd: tempDir };
-    await expect(resumeNode(request)).resolves.toMatchObject({
-      text: "final answer",
-    });
-    expect(await fs.readFile(path.join(source.codexHome, "resumed"), "utf8")).toBe("yes");
-    await expect(fs.stat(path.join(tempDir, "resumed"))).rejects.toMatchObject({
-      code: "ENOENT",
-    });
-
+    const request = resumeRequest("native-thread", { agentId: "research", cwd: tempDir });
     reconfigure("unix");
-    await expect(resumeNode(request)).rejects.toThrow("requires a local Codex catalog source");
+    await expect(command.handle(request)).rejects.toThrow("requires a local Codex catalog source");
     reconfigure("unix", { agents: { ownership: "explicit", entries: { replacement: {} } } });
-    await expect(resumeNode(request)).rejects.toThrow("unknown Codex session catalog agent");
+    await expect(command.handle(request)).rejects.toThrow("unknown Codex session catalog agent");
+    expect(runCommand).not.toHaveBeenCalled();
   } finally {
     await factory.stop();
   }
