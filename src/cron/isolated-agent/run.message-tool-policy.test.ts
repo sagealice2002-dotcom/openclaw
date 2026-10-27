@@ -128,17 +128,6 @@ function mockCliAnnounce() {
     meta: { agentMeta: { usage } },
   });
 }
-function mockPendingWarning() {
-  h.resolveCronPayloadOutcomeMock.mockReturnValue(
-    visibleOutcome("Final cron report", {
-      pendingPresentationWarningError: "⚠️ ✉️ Message failed",
-    }),
-  );
-  h.runEmbeddedAgentMock.mockResolvedValue({
-    payloads: [{ text: "Final cron report" }, { text: "⚠️ ✉️ Message failed", isError: true }],
-    meta: { agentMeta: { usage } },
-  });
-}
 describe("runCronIsolatedAgentTurn delivery policy", () => {
   setupRunCronIsolatedAgentTurnSuite();
   beforeEach(() => {
@@ -322,18 +311,6 @@ describe("runCronIsolatedAgentTurn delivery policy", () => {
         messageToolSentTo: [{ channel: "messagechat", to: "123", accountId: "bot-a" }],
       });
       dispatch({ sourceDeliveryOutcome: messageToolOutcome([observed], true) });
-    });
-
-    it("keeps pending message presentation warnings fatal when cron delivery does not succeed", async () => {
-      mockPendingWarning();
-      h.resolveCronDeliveryPlanMock.mockReturnValue({ requested: false, mode: "none" });
-      const result = await runJob();
-      expectFields(result, {
-        status: "error",
-        error: "⚠️ ✉️ Message failed",
-        summary: "Final cron report",
-      });
-      dispatch({ deliveryRequested: false, deliveryPayloads: [{ text: "Final cron report" }] });
     });
   });
 

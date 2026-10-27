@@ -9,14 +9,9 @@ import {
   loadSessionEntry,
   replaceSessionEntry,
 } from "../../config/sessions/session-accessor.js";
-import { readTranscriptEventRows } from "../../config/sessions/session-accessor.sqlite-read.js";
+import { inspectTranscriptEventsSync } from "../../config/sessions/session-accessor.sqlite-read.js";
 import { projectCronSessionEntry } from "../../config/sessions/session-entry-patch-operation.js";
-import { resolveSqliteTargetFromSessionStorePath } from "../../config/sessions/session-sqlite-target.js";
 import { CURRENT_SESSION_VERSION } from "../../config/sessions/version.js";
-import {
-  closeOpenClawAgentDatabasesForTest,
-  openOpenClawAgentDatabase,
-} from "../../state/openclaw-agent-db.js";
 import { useSessionStoreTempDirs } from "../../test-utils/session-state-cleanup.js";
 import { CronSessionLifecycleClaimError } from "../run-authority.js";
 import {
@@ -184,29 +179,19 @@ describe("createPersistCronSessionEntry", () => {
       },
     })();
 
-    const target = resolveSqliteTargetFromSessionStorePath(storePath);
-    if (!target.path) {
-      throw new Error("expected SQLite database path");
-    }
-    const database = openOpenClawAgentDatabase({
-      agentId: target.agentId ?? "main",
-      path: target.path,
+    const { events } = inspectTranscriptEventsSync({
+      storePath,
+      sessionKey: agentSessionKey,
+      sessionId: "cron-empty-window",
     });
-    try {
-      const events = readTranscriptEventRows(database, "cron-empty-window").map(
-        (row) => JSON.parse(row.eventJson) as { type?: unknown; version?: unknown; cwd?: unknown },
-      );
-      expect(events).toEqual([
-        expect.objectContaining({
-          type: "session",
-          version: CURRENT_SESSION_VERSION,
-          cwd: "/tmp/cron-stale-workspace",
-        }),
-        expect.objectContaining({ type: "reset" }),
-      ]);
-    } finally {
-      closeOpenClawAgentDatabasesForTest();
-    }
+    expect(events).toEqual([
+      expect.objectContaining({
+        type: "session",
+        version: CURRENT_SESSION_VERSION,
+        cwd: "/tmp/cron-stale-workspace",
+      }),
+      expect.objectContaining({ type: "reset" }),
+    ]);
     expect(cronSession.store[agentSessionKey]?.sessionId).toBe("cron-next-window");
     expect(cronSession.resetBoundaryPending).toBeUndefined();
   });
