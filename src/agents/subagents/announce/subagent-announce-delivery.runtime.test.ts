@@ -42,7 +42,7 @@ describe("subagent announce Gateway instance dispatch", () => {
                 view: {
                   agents: "*",
                   scopes: ["operator.sessions.write"],
-                  sessions: { others: "none" },
+                  sessions: { others: "write" },
                 },
               },
             },
