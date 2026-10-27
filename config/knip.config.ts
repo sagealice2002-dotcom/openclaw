@@ -117,6 +117,8 @@ const repositoryScriptEntries = [
   "scripts/bench-plugin-registration.mts!",
   // The cold-load benchmark guide invokes this opt-in CLI by path.
   "scripts/bench-control-ui-cold-load.ts!",
+  // scripts/perf/warm-reload-proof.md invokes this real-Gateway visual proof loop.
+  "scripts/perf/warm-reload-proof.ts!",
   // scripts/control-ui-retention/README.md invokes this opt-in production census.
   "scripts/control-ui-retention/retention-suite.ts!",
   // #179175 invokes this development-loop benchmark CLI by path.
@@ -169,6 +171,7 @@ const repositoryScriptEntries = [
   "scripts/perf/diagnostic-profile-measure.ts!",
   "scripts/perf/owned-directory-events-measure.ts!",
   "scripts/perf/plugin-gateway-scope-measure.ts!",
+  "scripts/perf/plugin-tool-resolution-measure.ts!",
   // pg-footprint.md and the pool proof commands execute these entries by path.
   "scripts/perf/pg-footprint.ts!",
   "scripts/perf/pg-footprint-preload.mjs!",
@@ -456,6 +459,8 @@ const repositoryScriptEntries = [
   "scripts/perf/agent-object-copy-measure.ts!",
   "scripts/perf/agent-stream-update-measure.ts!",
   "scripts/perf/agent-turn-taint-measure.ts!",
+  "scripts/perf/auth-availability-invalidation-measure.ts!",
+  "scripts/perf/chat-admission-freshness-measure.ts!",
   "scripts/perf/chat-display-admission-measure.mjs!",
   "scripts/perf/core-fresh-array-copies-measure.mjs!",
   "scripts/perf/delivery-info-measure.ts!",
@@ -471,6 +476,7 @@ const repositoryScriptEntries = [
   "scripts/perf/plugin-fresh-arrays-measure.mjs!",
   "scripts/perf/placement-session-evidence-measure.ts!",
   "scripts/perf/plugin-registry-normalizer-measure.ts!",
+  "scripts/perf/prompt-image-sanitation-measure.ts!",
   "scripts/perf/provider-auth-lookup-maps-measure.ts!",
   "scripts/perf/provider-request-preparation-measure.ts!",
   "scripts/perf/quadratic-report-measure.ts!",
@@ -484,6 +490,8 @@ const repositoryScriptEntries = [
   "scripts/perf/subagent-runtime-registry-measure.ts!",
   "scripts/perf/transcript-resident-hydration-measure.ts!",
   "scripts/perf/worker-task-input-measure.mjs!",
+  "scripts/perf/worktree-provisioning-gateway-measure.ts!",
+  "scripts/perf/worktree-provisioning-measure.ts!",
   // Maintained source headers and a dedicated guide invoke these standalone commands by exact path.
   "scripts/perf/attempt-tool-context-measure.ts!",
   "scripts/perf/catalog-retained-data-measure.ts!",
@@ -555,6 +563,7 @@ const repositoryScriptEntries = [
   "scripts/perf/agent-directory-recovery-measure.ts!",
   "scripts/perf/agent-event-frame-census-preload.mjs!",
   "scripts/perf/chat-send-attachments-measure.ts!",
+  "scripts/perf/stage-media-measure.ts!",
   "scripts/perf/codex-catalog-lines.ts!",
   "scripts/perf/codex-request-imports.ts!",
   "scripts/perf/empty-checkout-diff-measure.ts!",
