@@ -52,7 +52,6 @@ class AndroidLicenseNoticesTest {
         "CommonMark Java",
         "dnsjava",
         "DOMPurify",
-        "es-toolkit",
         "JNA",
         "KaTeX",
         "Kotlin Libraries",
