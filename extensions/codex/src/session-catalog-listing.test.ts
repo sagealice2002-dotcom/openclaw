@@ -14,17 +14,6 @@ const listCatalog = ({
   ...options
 }: Omit<ListOptions, "config" | "runtime"> & Partial<Pick<ListOptions, "runtime">>) =>
   fixture.listCodexSessionCatalog({ config: fixture.config, runtime, ...options });
-function registeredProvider(
-  control: Parameters<typeof fixture.registerCodexSessionCatalog>[0]["control"],
-  runtimeConfig = fixture.config,
-) {
-  return fixture.createCatalogTestProvider({
-    startupConfig: runtimeConfig,
-    control,
-    getPluginConfig: () => defaultPluginConfig,
-    getRuntimeConfig: () => runtimeConfig,
-  });
-}
 type ManagedThreads = NonNullable<
   ReturnType<typeof fixture.createCodexTestBindingStore>["managedThreads"]
 >;
@@ -512,7 +501,12 @@ it("exposes every local source as an actionable host for the selected owner", as
   const forRequest = vi.fn((agentId: string, source?: fixture.CodexCatalogHome) =>
     fixture.createControl({ listPage: async () => await listPage(source) }),
   );
-  const provider = registeredProvider({ forRequest }, runtimeConfig);
+  const provider = fixture.createCatalogTestProvider({
+    startupConfig: runtimeConfig,
+    control: { forRequest },
+    getPluginConfig: () => defaultPluginConfig,
+    getRuntimeConfig: () => runtimeConfig,
+  });
 
   await fixture.withEnvAsync({ CODEX_HOME: processCodexHome }, async () => {
     const onHost = vi.fn();

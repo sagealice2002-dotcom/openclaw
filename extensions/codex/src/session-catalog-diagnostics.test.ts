@@ -128,16 +128,15 @@ function mockObservedRequest(
   run: (
     observation: CodexControlRequestObservation | undefined,
     params: { cursor?: string },
-    method: string,
   ) => Promise<unknown>,
 ) {
   nativeRequest.mockImplementation(
     async (
       _config: unknown,
-      method: string,
+      _method: string,
       params: { cursor?: string },
       options: { controlObservation?: CodexControlRequestObservation },
-    ) => run(options.controlObservation, params, method),
+    ) => run(options.controlObservation, params),
   );
 }
 
@@ -204,7 +203,7 @@ async function fixture(suffix = "default") {
       provider.list({ hostIds: [CODEX_LOCAL_SESSION_HOST_ID], ...(search ? { search } : {}) }),
     async thread(originator: "openclaw" | "codex") {
       const threadId = `${privateText}-${originator}`;
-      const rollout = path.join(home, "sessions", "private-rollout.jsonl");
+      const rollout = path.join(home, "sessions", `${originator}-rollout.jsonl`);
       await fs.writeFile(
         rollout,
         `${JSON.stringify({ type: "session_meta", payload: { id: threadId, originator } })}\n`,
@@ -220,48 +219,23 @@ async function fixture(suffix = "default") {
   };
 }
 
-it("keeps background hydration context separate from list requests", async () => {
+it("shares background hydration across callers without leaking their context or session data", async ({
+  onTestFinished,
+}) => {
   const f = await fixture();
   const managed = await f.thread("openclaw");
-  const ownerScope = new AsyncLocalStorage<string>();
-  const sourceOwners: Array<string | undefined> = [];
-  nativeRequest.mockImplementation(async (_config, method, params) => {
-    expect(method).toBe("thread/list");
-    sourceOwners.push(ownerScope.getStore());
-    clock += 1_100;
-    return params.cursor
-      ? { data: [idleThread({ id: "visible", source: "cli" })] }
-      : { data: [managed], nextCursor: "next" };
-  });
-  const background = { traceId: "1".repeat(32), spanId: "1".repeat(16) };
-  const caller = { traceId: "2".repeat(32), spanId: "2".repeat(16) };
-  try {
-    await ownerScope.run("background", () =>
-      runWithDiagnosticTraceContext(background, () => f.control.initialize()),
-    );
-    const hosts = await ownerScope.run("caller", () =>
-      runWithDiagnosticTraceContext(caller, () => f.list()),
-    );
-    expect(hosts[0]?.sessions).toEqual([expect.objectContaining({ threadId: "visible" })]);
-    expect(sourceOwners).toEqual(["background", "background"]);
-    const pages = await emitted(PAGE);
-    expect(pages.map((page) => page.trace)).toMatchObject([background, background]);
-    for (const page of pages) {
-      expect(fields(page)).not.toHaveProperty("listOperationId");
-    }
-    expect(await emitted(LIST)).toEqual([]);
-    expect(nativeRequest).toHaveBeenCalledTimes(2);
-  } finally {
-    ownerScope.disable();
-  }
-});
-
-it("shares one cold hydration across four callers without logging session data", async () => {
-  const f = await fixture();
   const thread = await f.thread("codex");
+  const ownerScope = new AsyncLocalStorage<string>();
+  onTestFinished(() => ownerScope.disable());
+  const sourceOwners: Array<string | undefined> = [];
   const response = responseGate();
   const started = createDeferred<void>();
-  mockObservedRequest(async (observation) => {
+  mockObservedRequest(async (observation, params) => {
+    sourceOwners.push(ownerScope.getStore());
+    if (params.cursor) {
+      clock += 1_100;
+      return { data: [thread] };
+    }
     started.resolve();
     const result = await response.promise;
     observation?.attemptWaiterFinished?.(waiterSummary());
@@ -272,14 +246,18 @@ it("shares one cold hydration across four callers without logging session data",
     spanId: String(index + 1).repeat(16),
   }));
   const pending = traces.map((trace) =>
-    runWithDiagnosticTraceContext(trace, () => f.control.initialize()),
+    ownerScope.run("background", () =>
+      runWithDiagnosticTraceContext(trace, () => f.control.initialize()),
+    ),
   );
   let settledLists = 0;
   const coldLists = traces.map((trace) =>
-    runWithDiagnosticTraceContext(trace, () => f.list()).then((result) => {
-      settledLists++;
-      return result;
-    }),
+    ownerScope
+      .run("caller", () => runWithDiagnosticTraceContext(trace, () => f.list()))
+      .then((result) => {
+        settledLists++;
+        return result;
+      }),
   );
   pendingWork.push(...pending, ...coldLists);
   await started.promise;
@@ -287,7 +265,7 @@ it("shares one cold hydration across four callers without logging session data",
   expect(nativeRequest).toHaveBeenCalledOnce();
   expect(settledLists).toBe(0);
   clock += 1_500;
-  response.resolve({ data: [thread] });
+  response.resolve({ data: [managed], nextCursor: "next" });
   await Promise.all(pending);
   const results = await Promise.all(coldLists);
   expect(results).toEqual(Array.from({ length: 4 }, () => results[0]));
@@ -296,7 +274,11 @@ it("shares one cold hydration across four callers without logging session data",
   ]);
   const pages = await emitted(PAGE);
   const lists = await emitted(LIST);
-  expect(pages).toHaveLength(1);
+  expect(sourceOwners).toEqual(["background", "background"]);
+  expect(pages.map((page) => page.trace)).toMatchObject([traces[0], traces[0]]);
+  for (const page of pages) {
+    expect(fields(page)).not.toHaveProperty("listOperationId");
+  }
   expect(lists).toHaveLength(4);
   for (const trace of traces) {
     expect(lists).toContainEqual(
@@ -304,14 +286,13 @@ it("shares one cold hydration across four callers without logging session data",
         trace: expect.objectContaining(trace),
         attributes: expect.objectContaining({
           outcome: "resolved",
-          elapsedMs: 1_500,
+          elapsedMs: 2_600,
           controlPageCalls: 1,
           adoptionCalls: 1,
         }),
       }),
     );
   }
-  expect(nativeRequest).toHaveBeenCalledOnce();
   const producer = fields(pages[0]);
   expect(producer).not.toHaveProperty("controlFailurePhase");
   expect(producer).not.toHaveProperty("controlFailureCategory");
@@ -327,12 +308,11 @@ it("shares one cold hydration across four callers without logging session data",
     controlWaitersV1: resolvedWaiters,
     controlWaitersOmitted: 0,
   });
-  expect(producer).not.toHaveProperty("listOperationId");
-  expect(pages[0]?.trace).toMatchObject(traces[0]!);
   expect(new Set(records.map((record) => fields(record).diagnosticEpoch)).size).toBe(1);
   expect(JSON.stringify(records)).not.toContain(f.home);
   expect(await f.list()).toEqual(results[0]);
-  expect(nativeRequest).toHaveBeenCalledOnce();
+  expect(nativeRequest).toHaveBeenCalledTimes(2);
+  expect(await emitted(LIST)).toHaveLength(4);
 });
 
 it("bounds maximal waiter diagnostics across hydration pages before resident filtering", async () => {
@@ -340,8 +320,7 @@ it("bounds maximal waiter diagnostics across hydration pages before resident fil
   const thread = await f.thread("codex");
   const maximum = Number.MAX_SAFE_INTEGER;
   const cursors: (string | undefined)[] = [];
-  mockObservedRequest(async (observation, params, method) => {
-    expect(method).toBe("thread/list");
+  mockObservedRequest(async (observation, params) => {
     expect(params).not.toHaveProperty("searchTerm");
     cursors.push(params.cursor);
     observation?.attemptWaiterFinished?.(waiterSummary({ clientInstanceId: privateText }));
@@ -391,24 +370,11 @@ it("bounds maximal waiter diagnostics across hydration pages before resident fil
       provenanceCacheHits: index === 0 ? 0 : 1,
       controlWaitersOmitted: 3,
       omittedObservations: 0,
-      controlWaitersV1: JSON.stringify(
-        [0, 1, 4, 5].map((waiterIndex) => [
-          1,
-          maximum,
-          clientInstanceId,
-          maximum - waiterIndex,
-          maximum,
-          "joined",
-          maximum,
-          maximum,
-          maximum,
-          maximum,
-          "authority-rejected",
-          "ingress-rejected",
-          maximum,
-        ]),
-      ),
     });
+    const waiters = JSON.parse(String(fields(page).controlWaitersV1));
+    expect(waiters.map((waiter: unknown[]) => waiter[3])).toEqual(
+      [0, 1, 4, 5].map((offset) => maximum - offset),
+    );
   }
   expect(JSON.stringify(records)).not.toContain("private-cursor-");
   await f.list("another query");

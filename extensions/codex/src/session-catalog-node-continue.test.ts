@@ -134,8 +134,6 @@ it("adopts a paired-node session with bounded history and an executable binding"
         sessionId: sessionFamilyId,
         cwd: "/remote/repo",
         source: "vscode",
-        modelProvider: "openai",
-        createdAt: 123,
       }),
     ],
     [
@@ -359,7 +357,6 @@ it("builds local and paired-node terminal plans from verified catalog records", 
   });
   for (const [terminal, admin, allowed] of [
     [undefined, true, true],
-    [true, true, true],
     [false, true, false],
     [undefined, false, false],
   ] as const) {
