@@ -11,7 +11,7 @@ import { mediaTicketPayload } from "../../../test-helpers/control-ui-attachment-
 import { cleanupSolid, mountSolid } from "../../../test-helpers/mount-solid.ts";
 import { flush } from "../../../test-helpers/solid-settle.ts";
 import { resolveAssistantAttachmentAvailability } from "./chat-message-attachment-availability.ts";
-import { MessageImages, type MessageImagesProps } from "./chat-message-images-solid.tsx";
+import { MessageImages, type MessageImagesProps } from "./chat-message-images-view.tsx";
 import {
   isChatMediaResourceCurrent,
   observeChatMediaResource,
